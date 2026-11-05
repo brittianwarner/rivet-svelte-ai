@@ -59,7 +59,7 @@ Use Node 26, Bun 1.4.4, and a current Railway CLI with `railway config` support.
      bun run test:deployment https://YOUR_WEB_DOMAIN
    ```
 
-The API startup script waits for storage and creates the default node pool only if missing. Each API image records a build-time release version that remains stable across restarts. Set `RIVET_NODE_VERSION` explicitly when promoting an older image: rollbacks also need a version newer than the active release. Do not reuse an old version for a changed release.
+The API startup script waits for storage and creates the named `starter` namespace and its default node pool only if missing. Namespace selection is passed explicitly to browser clients. Each Railway environment has its own control plane, volume, and bucket instance; references remain inside that environment. Each API image records a build-time release version that remains stable across restarts. Set `RIVET_NODE_VERSION` explicitly when promoting an older image: rollbacks also need a version newer than the active release. Do not reuse an old version for a changed release.
 
 ### Operate with a coding agent
 
@@ -67,7 +67,7 @@ Start every infrastructure task with `railway status --json` and a read-only `bu
 
 Use `railway logs --service api --lines 100`, `railway logs --service rivet --lines 100`, and `railway deployment list --service web` to diagnose a release. Logs may contain application data: inspect narrowly and never paste credentials. Keep secret variable values in Railway; use references or `preserve()` when importing them.
 
-Custom web domains require changing both `WEB_ORIGIN` (web build) and `WEB_ORIGINS` (API). Custom gateway domains require `RIVET_PUBLIC_ENDPOINT`. Rebuild web after changing its origin. Keep API/peer/metrics ports private. Do not expose ports 6421 or 6422 publicly.
+Custom web domains require changing both `WEB_ORIGIN` (web build) and `WEB_ORIGINS` (API). Custom gateway domains require `RIVET_PUBLIC_ENDPOINT`. Rebuild web after changing its origin. Keep API/peer/metrics ports private. Do not expose the peer port 6421 or metrics port 6430 publicly.
 
 ### Storage and availability
 
@@ -105,7 +105,7 @@ Configure these only on the API service:
 
 With `RIVET_ENDPOINT` set, the registry does not start a local engine. Follow the current [Rivet deployment documentation](https://rivet.dev/docs/) for the selected host and configure its runner pool. Use HTTPS/WSS on public endpoints. Do not rely on ephemeral container disks for local-engine production persistence.
 
-Rivet 3.0's [release announcement](https://rivet.dev/changelog/2026-10-26-introducing-rivet-3-0-preview/) notes that multi-region, serverless, and ACL support are still forthcoming in 3.0. Check current feature availability before choosing a deployment architecture. This template uses a long-running runner.
+This template uses long-running Rivet 3.0 nodes and the documented scoped-token API. Check the documentation for your exact engine version before enabling additional runtime modes.
 
 ## Turn the demo into an application
 
@@ -131,3 +131,11 @@ Verify a typed actor action and event, a second browser, reconnect, restart pers
 Full local engine recovery remains unqualified on RivetKit/Engine 3.0.1: an isolated test that also restarted the engine observed `depot/routing_unavailable`, `depot/command_capacity`, and actor readiness timeouts on subsequent reads. This does not establish data loss or successful recovery. To reproduce that investigation separately, run `FULL_ENGINE_RESTART=1 bun run test:restart`. Qualify engine restart recovery on the engine version and deployment you intend to operate before depending on it.
 
 See the [local engine recovery report](local-engine-recovery.md) for reproduction steps, settings, and observed errors.
+
+## Rivet 3.0 configuration references
+
+- [Self-host configuration](https://rivet.dev/docs/deploy/self-host/control-plane/configuration/) and [storage](https://rivet.dev/docs/deploy/self-host/control-plane/storage/): official Engine image, `RIVET__STORAGE__*` settings, one persistent log volume, and S3 object storage. No patched Engine or SDK is used.
+- [Namespaces](https://rivet.dev/docs/namespaces/) and [scoped tokens](https://rivet.dev/docs/jwt/): named namespace, backend-only admin token, explicit browser grants, and renewable credentials.
+- [Node health](https://rivet.dev/docs/deploy/self-host/nodes/health-checks/) and [versions](https://rivet.dev/docs/versions/): native registry health and increasing release versions.
+- [Railway bucket URL style](https://docs.railway.com/storage-buckets) and [Rust object_store endpoint behavior](https://docs.rs/object_store/latest/object_store/aws/struct.AmazonS3Builder.html#method.with_virtual_hosted_style_request): the small startup script formats the bucket hostname and uses the supported `AWS_VIRTUAL_HOSTED_STYLE_REQUEST` setting. It does not alter Rivet storage behavior.
+- [Production checklist](https://rivet.dev/docs/deploy/self-host/control-plane/production-checklist/): a production HA cluster calls for three or more instances, versioned object storage, separate disks of at least 100 GiB, monitoring, and a tested restore. This smaller Railway starter deliberately does not claim that deployment profile.

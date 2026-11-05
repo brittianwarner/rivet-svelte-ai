@@ -33,6 +33,7 @@ export interface ChatQueueMessage {
 /** What the browser needs to open an actor socket. Never includes a model key. */
 export interface ClientConfig {
   rivetEndpoint: string;
+  rivetNamespace?: string;
   actorToken: string | null;
   /** Obtain a renewable, scoped Engine credential from the backend. */
   authenticatedEngine?: boolean;

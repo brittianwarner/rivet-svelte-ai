@@ -13,6 +13,7 @@
   let nextTokenAttempt = 0;
   const client = createClient<typeof registry>({
     endpoint: initial.rivetEndpoint,
+    namespace: initial.rivetNamespace,
     ...(initial.authenticatedEngine
       ? {
           getToken: async () => {

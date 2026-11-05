@@ -20,6 +20,7 @@ const client = createClient<typeof registry>({
 const app = createApp({
   origins: allowedOrigins(),
   endpoint: () => endpoint,
+  namespace: process.env.RIVET_NAMESPACE,
   token: actorToken,
   provider: chooseProvider,
   actorHealthy: async () => (await registry.routes.health()).ok,

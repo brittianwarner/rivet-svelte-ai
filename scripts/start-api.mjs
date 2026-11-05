@@ -17,10 +17,34 @@ const headers = {
   "Content-Type": "application/json",
 };
 
+async function ensureNamespace() {
+  const list = new URL("/namespaces", endpoint);
+  list.searchParams.set("name", namespace);
+  list.searchParams.set("limit", "1");
+  const response = await fetch(list, {
+    headers,
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok)
+    throw new Error(`Namespace lookup returned HTTP ${response.status}.`);
+  const result = await response.json();
+  if (result.namespaces?.some((item) => item.name === namespace)) return;
+  const created = await fetch(new URL("/namespaces", endpoint), {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: namespace }),
+    signal: AbortSignal.timeout(5_000),
+  });
+  // Another starting node may win the creation race. Recheck on the next attempt.
+  if (!created.ok)
+    throw new Error(`Namespace creation returned HTTP ${created.status}.`);
+}
+
 // Storage is not necessarily ready when the Engine's /health first answers.
 // Existing pool configuration is preserved on every subsequent deployment.
 for (let attempt = 0; ; attempt++) {
   try {
+    await ensureNamespace();
     let response = await fetch(url, {
       headers,
       signal: AbortSignal.timeout(5_000),

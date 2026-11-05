@@ -7,6 +7,7 @@ import { Hono } from "hono";
 interface ApiDependencies {
   origins: string[];
   endpoint: () => string;
+  namespace?: string;
   token: () => string | null;
   provider: () => ProviderChoice;
   issueBrowserToken?: () => Promise<{ token: string; expiresAt: number }>;
@@ -44,6 +45,7 @@ export function createApp(deps: ApiDependencies) {
   app.get("/client-config", (c) =>
     c.json({
       rivetEndpoint: deps.endpoint(),
+      ...(deps.namespace ? { rivetNamespace: deps.namespace } : {}),
       actorToken: deps.token(),
       ...(deps.issueBrowserToken ? { authenticatedEngine: true } : {}),
     }),

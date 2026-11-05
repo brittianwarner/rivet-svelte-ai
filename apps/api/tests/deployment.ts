@@ -31,6 +31,7 @@ assert.ok(
 let scopedToken = "";
 const client = createClient<typeof registry>({
   endpoint: config.rivetEndpoint,
+  namespace: config.rivetNamespace,
   getToken: async () => {
     const response = await fetch(new URL("/api/client-token", base), {
       method: "POST",
@@ -82,6 +83,7 @@ try {
     "/pools/default/nodes?namespace=default",
     config.rivetEndpoint,
   );
+  admin.searchParams.set("namespace", config.rivetNamespace || "default");
   const denied = await fetch(admin, {
     headers: { Authorization: `Bearer ${scopedToken}` },
   });

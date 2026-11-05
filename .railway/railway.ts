@@ -70,7 +70,7 @@ export default defineRailway(() => {
       RIVET_ENDPOINT: "http://${{rivet.RAILWAY_PRIVATE_DOMAIN}}:6420",
       RIVET_PUBLIC_ENDPOINT: "https://${{rivet.RAILWAY_PUBLIC_DOMAIN}}",
       RIVET_TOKEN: rivet.env.RIVET__AUTH__ADMIN_TOKEN,
-      RIVET_NAMESPACE: "default",
+      RIVET_NAMESPACE: "starter",
       WEB_ORIGINS: "https://${{web.RAILWAY_PUBLIC_DOMAIN}}",
       RIVET_INSPECTOR_DISABLE: "1",
     },
