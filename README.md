@@ -67,7 +67,7 @@ cp .env.example .env
 # Set OPENROUTER_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY, then restart bun run dev.
 ```
 
-A non-empty OpenRouter key takes precedence; otherwise the app uses Gemini. Defaults are `google/gemini-3.8-flash` and `gemini-3.8-flash`, respectively. Both are configurable. Provider keys stay in the API process. The browser only receives the provider name, model name, and public connection configuration.
+A non-empty OpenRouter key takes precedence; otherwise the app uses Gemini. Defaults are `z-ai/glm-5.3-flash` and `gemini-3.8-flash`, respectively. Both are configurable. Provider keys stay in the API process. The browser only receives the provider name, model name, and public connection configuration.
 
 Chat IDs live in the tab's session storage. Reloading restores recent messages; **New chat** starts another actor. Closing a tab does not cancel an active reply. **Stop** cancels the active generation.
 

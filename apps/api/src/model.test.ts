@@ -10,7 +10,7 @@ describe("chooseProvider", () => {
     });
 
     assert.equal(choice.provider, "openrouter");
-    assert.equal(choice.modelId, "google/gemini-3.8-flash");
+    assert.equal(choice.modelId, "z-ai/glm-5.3-flash");
   });
 
   it("uses an OpenRouter model override", () => {
