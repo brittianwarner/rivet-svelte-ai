@@ -1,0 +1,20 @@
+# Contributing
+
+Use Node 26 and Bun 1.4.4. Install from the root with `bun install --frozen-lockfile`.
+
+Before opening a pull request:
+
+```bash
+bun run format:check
+bun run validate
+bunx playwright install chromium
+bun run test:e2e:production
+```
+
+Keep actor rules in `apps/api`, browser projections in view models, and presentation in components. Use Svelte 5 runes, typed events, runtime input validation, compound keys, and bounded state. Never import runtime server code into the web app. Document lifecycle and retry semantics for new background work.
+
+Add behavior tests for changed contracts or lifecycle guarantees. Use local engines and fake providers for repeatable tests; do not require paid credentials in CI. Browser tests have their own ports. The main suite blanks provider keys; the AI suite uses a test-process-only fetch transport with a dummy key and exercises the real provider SDK, actors, and UI without paid calls. Do not run two browser suites concurrently on those same ports.
+
+The workspace adapter has its own Apache-2.0 license and detailed API reference. Preserve upstream bridge attribution. Its existing source formatting is excluded from the starter-wide formatter to keep application changes reviewable.
+
+Svelte checking uses TypeScript 7 through `@typescript/native` and `svelte-check --tsgo`. The Svelte workspaces also install TypeScript 6 because Svelte tooling still requires its compiler API. Keep this compatibility dependency until Svelte supports TypeScript 7 without it. The API uses TypeScript 7 directly.

@@ -1,11 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { UserError } from "rivetkit";
-import { actorToken } from "./env.ts";
-
-const WEB_ORIGINS = new Set([
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-]);
+import { actorToken, allowedOrigins } from "./env.ts";
 
 interface ConnectLike {
   request?: Request;
@@ -24,7 +19,7 @@ function tokenMatches(expected: string, provided: string): boolean {
  */
 export function authorizeConnection(c: ConnectLike, params: unknown): void {
   const origin = c.request?.headers.get("origin");
-  if (origin && !WEB_ORIGINS.has(origin)) {
+  if (origin && !allowedOrigins().includes(origin)) {
     throw new UserError("Origin not allowed", { code: "ORIGIN_NOT_ALLOWED" });
   }
 

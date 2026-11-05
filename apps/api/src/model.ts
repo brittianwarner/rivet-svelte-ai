@@ -1,9 +1,6 @@
-import { google } from "@ai-sdk/google";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import {
-  DEFAULT_GEMINI_MODEL,
-  DEFAULT_OPENROUTER_MODEL,
-} from "@example/wire";
+import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from "@example/wire";
 import type { LanguageModel } from "ai";
 
 export interface ProviderChoice {
@@ -39,9 +36,10 @@ export function chooseProvider(env: EnvSource = process.env): ProviderChoice {
 }
 
 /** Build the AI SDK model for the current environment. */
-export function createLanguageModel(
-  env: EnvSource = process.env,
-): { choice: ProviderChoice; model: LanguageModel | null } {
+export function createLanguageModel(env: EnvSource = process.env): {
+  choice: ProviderChoice;
+  model: LanguageModel | null;
+} {
   const choice = chooseProvider(env);
 
   if (choice.provider === "openrouter" && choice.modelId) {
@@ -52,6 +50,9 @@ export function createLanguageModel(
   }
 
   if (choice.provider === "gemini" && choice.modelId) {
+    const google = createGoogleGenerativeAI({
+      apiKey: env.GOOGLE_GENERATIVE_AI_API_KEY?.trim(),
+    });
     return { choice, model: google(choice.modelId) };
   }
 

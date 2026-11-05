@@ -1,6 +1,6 @@
 # @rivetkit/svelte
 
-Official Svelte 5 adapter for [RivetKit](https://rivet.gg) actors.
+Workspace Svelte 5 adapter for [RivetKit](https://rivet.dev) 3.0.1 actors. This template maintains its own adapter; it is not an official Rivet release.
 
 `@rivetkit/svelte` keeps the core RivetKit client model intact while giving Svelte apps a first-class DX for:
 
@@ -14,8 +14,10 @@ Built on a small package-local, Apache-2.0-derived Rivet framework bridge and sh
 ## Install
 
 ```bash
-npm install @rivetkit/svelte rivetkit
+bun install # from this repository root
 ```
+
+The starter resolves `@rivetkit/svelte` via `workspace:*`. Copy this package with the app when extracting the example; do not assume a same-named registry package has this API.
 
 ## Migration Note
 
@@ -35,12 +37,18 @@ export const rivetContext = createRivetContext<AppRegistry>("AppRivet");
 
 ```svelte
 <script lang="ts">
-  import { rivetContext } from '$lib/rivet';
-  import type { AppRegistry } from './registry';
+  import { onDestroy, type Snippet } from "svelte";
+  import { createClient } from "@rivetkit/svelte";
+  import { rivetContext } from "#lib/rivet.js";
+  import type { AppRegistry } from "./registry";
 
-  let { children } = $props();
+  let { children }: { children: Snippet } = $props();
 
-  rivetContext.setup('http://localhost:3000');
+  const client = createClient<AppRegistry>("http://localhost:3000");
+  rivetContext.setupWithClient(client);
+  onDestroy(() => {
+    void client.dispose();
+  });
 </script>
 
 {@render children()}
@@ -48,7 +56,7 @@ export const rivetContext = createRivetContext<AppRegistry>("AppRivet");
 
 ### Shared client app: one transport, one wrapper, many consumers
 
-This is the recommended pattern when you want component-level `useActor()` and app-level ViewModels to share the same client.
+For browser-only applications, this is an optional pattern when you want component-level `useActor()` and app-level ViewModels to share the same client.
 
 ```ts
 // lib/rivet.ts
@@ -81,7 +89,7 @@ export const getRivet = createSharedRivetKit<AppRegistry>(getClient);
 
 ```svelte
 <script lang="ts">
-  import { rivetContext, getRivet } from '$lib/rivet';
+  import { rivetContext, getRivet } from "#lib/rivet.js";
 
   let { children } = $props();
 
@@ -207,21 +215,21 @@ These APIs remain part of the public surface:
 
 ```svelte
 <script lang="ts">
-  import { rivetContext } from '$lib/rivet';
-  import type { AppRegistry } from './registry';
+  import { rivetContext } from "#lib/rivet.js";
+  import type { AppRegistry } from "./registry";
 
   let { roomId } = $props<{ roomId: string }>();
 
   const { useActor } = rivetContext.get();
 
   const chat = useActor(() => ({
-    name: 'chatRoom',
+    name: "chatRoom",
     key: [roomId],
   }));
 </script>
 
 {#if chat.isConnected}
-  <button onclick={() => chat.sendMessage({ text: 'Hello' })}>Send</button>
+  <button onclick={() => chat.sendMessage({ text: "Hello" })}>Send</button>
 {:else if chat.error}
   <p>{chat.error.message}</p>
 {/if}
@@ -325,17 +333,14 @@ await actor.increment(5);
   const { useActor } = rivetContext.get();
 
   const counter = useActor({
-    name: 'counter',
-    key: ['main'],
+    name: "counter",
+    key: ["main"],
     actionDefaults: { timeout: 10_000 },
   });
 </script>
 
-<button
-  onclick={() => counter.increment(1)}
-  disabled={counter.isMutating}
->
-  {counter.isMutating ? 'Saving...' : 'Increment'}
+<button onclick={() => counter.increment(1)} disabled={counter.isMutating}>
+  {counter.isMutating ? "Saving..." : "Increment"}
 </button>
 
 {#if counter.lastActionError}
@@ -419,8 +424,8 @@ async togglePin(conversationId: string): Promise<void> {
 ```svelte
 <script lang="ts">
   const actor = useActor({
-    name: 'batchProcessor',
-    key: ['main'],
+    name: "batchProcessor",
+    key: ["main"],
     actionDefaults: { timeout: 60_000 },
   });
 
@@ -683,9 +688,9 @@ describe("runes", () => {
 
 ## Type Safety Note
 
-Actor method calls (e.g. `actor.sendMessage(...)`) are **untyped at the package level**. The `ProxiedActorMethods` type uses `Record<string, (...args: any[]) => any>` because RivetKit's deeply nested conditional types inside `ActorConn` exceed TypeScript's instantiation depth limit (TS2589) when wrapped in `Omit` or mapped types.
+Actor action names, arguments, and results are inferred directly from the registry's action definitions. Event names and payloads use Rivet's typed subscription contract. Both `useActor()` and `createReactiveActor()` preserve these types.
 
-All reactive state properties (`connStatus`, `error`, `isMutating`, etc.) remain fully typed. For type-safe actor method calls, use typed client interfaces from your actor registry at the call site.
+Action results include `undefined` because middleware can suppress failures with `throwOnError: false`. Handle this case before using a result, as the example view models do. Runtime validation remains necessary for untrusted network inputs. Compile-time regression cases live in `src/check-types/public-options.ts`.
 
 ## Familiar Mental Models
 
@@ -702,12 +707,12 @@ The connection lifecycle also follows Rivet's JavaScript client contract: statef
 
 ## Requirements
 
-- Svelte `^5.57.0`
-- RivetKit `^2.3.17`
+- Svelte `^5.57.3`
+- RivetKit `^3.0.1`
 
-The published artifact is self-contained: its internal framework bridge forwards `getParams` through both `get()` and `getOrCreate()`. It does not rely on a consuming repository's `patchedDependencies` configuration.
+The workspace package is self-contained: its internal framework bridge forwards `getParams` through both `get()` and `getOrCreate()`. It does not rely on a consuming repository's `patchedDependencies` configuration.
 
 ## License
 
-Apache-2.0. The published package includes the full license text, including the
+Apache-2.0. The package includes the full license text, including the
 Rivet framework attribution retained by the package-local bridge.

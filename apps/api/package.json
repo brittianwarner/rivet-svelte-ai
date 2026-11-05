@@ -9,20 +9,21 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/model.test.ts"
+    "test": "node --experimental-strip-types --test src/*.test.ts",
+    "start": "node --experimental-strip-types src/index.ts"
   },
   "dependencies": {
-    "@ai-sdk/google": "^4.0.76",
+    "@ai-sdk/google": "^4.0.112",
     "@example/wire": "workspace:*",
-    "@hono/node-server": "^1.19.5",
+    "@hono/node-server": "^2.1.6",
     "@openrouter/ai-sdk-provider": "^3.1.0",
-    "ai": "^7.0.109",
-    "hono": "^4.9.8",
-    "rivetkit": "2.3.17"
+    "ai": "^7.0.163",
+    "hono": "^4.13.16",
+    "rivetkit": "3.0.1"
   },
   "devDependencies": {
-    "@types/node": "^22.18.0",
-    "tsx": "^4.20.5",
-    "typescript": "^5.9.2"
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   }
 }

@@ -29,27 +29,28 @@
   ],
   "scripts": {
     "build": "svelte-package -i src/lib",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
-    "check-types": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "svelte-check --tsgo --tsconfig ./tsconfig.json",
+    "check-types": "svelte-check --tsgo --tsconfig ./tsconfig.json",
     "test": "vitest run --environment jsdom src/lib/__tests__/*.test.ts",
     "bench": "vitest bench --run --environment jsdom src/lib/__bench__/*.bench.ts"
   },
   "peerDependencies": {
-    "rivetkit": "^2.3.17",
-    "svelte": "^5.57.0"
+    "rivetkit": "^3.0.1",
+    "svelte": "^5.57.3"
   },
   "dependencies": {
     "esm-env": "^1.2.2",
     "fast-deep-equal": "^3.1.3"
   },
   "devDependencies": {
-    "rivetkit": "2.3.17",
-    "@sveltejs/package": "^2.5.8",
-    "jsdom": "^30.0.1",
-    "svelte": "^5.57.0",
-    "svelte-check": "^4.7.6",
-    "typescript": "^6.0.3",
-    "vitest": "^4.0.18"
+    "rivetkit": "3.0.1",
+    "@sveltejs/package": "^3.0.2",
+    "jsdom": "^30.1.3",
+    "svelte": "^5.57.3",
+    "svelte-check": "^4.7.8",
+    "typescript": "~6.0.3",
+    "vitest": "^5.1.0",
+    "@typescript/native": "npm:typescript@^7.0.2"
   },
   "keywords": [
     "rivetkit",

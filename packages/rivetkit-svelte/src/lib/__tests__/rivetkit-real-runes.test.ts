@@ -94,7 +94,8 @@ async function loadRealRunesHarness() {
   const harnessSource = `
     import { createRivetKitWithClient } from ${JSON.stringify(adapterUrl)};
 
-    export function createHarness() {
+    export function createHarness(withEvent = false) {
+      let stopEvent;
       let token = $state("token-1");
       let actor;
       const dispose = $effect.root(() => {
@@ -107,10 +108,12 @@ async function loadRealRunesHarness() {
           params: { token },
           actionDefaults: {}
         }));
+        if (withEvent) stopEvent = actor.onEvent("changed", () => {});
       });
       return {
         get actor() { return actor; },
         setToken(value) { token = value; },
+        stopEvent() { stopEvent?.(); },
         dispose
       };
     }
@@ -233,4 +236,36 @@ describe("useActor with the real Svelte rune runtime", () => {
       delete (globalThis as Record<string, unknown>)[frameworkHarnessKey];
     }
   });
+});
+
+
+test("useActor event unsubscribe is immediate, idempotent, and survives reconnect", async () => {
+  let subscriptions = 0;
+  let releases = 0;
+  const connection = { on: () => { subscriptions += 1; return () => { releases += 1; }; } };
+  let state = { connection, handle: {}, connStatus: "connected", error: null, hash: "stable" };
+  let subscriber: ((value: { currentVal: typeof state }) => void) | undefined;
+  Object.assign(globalThis, { [frameworkHarnessKey]: {
+    configure() {},
+    getOrCreateActor() { return {
+      key: "stable", mount: () => () => {},
+      state: { get state() { return state; }, subscribe(callback: typeof subscriber) { subscriber = callback; return () => {}; } },
+    }; },
+  } });
+  try {
+    const { createHarness } = await loadRealRunesHarness();
+    const instance = createHarness(true);
+    await Promise.resolve();
+    flushSync();
+    expect(subscriptions).toBe(1);
+    instance.stopEvent();
+    instance.stopEvent();
+    expect(releases).toBe(1);
+    state = { ...state, connection: { ...connection } };
+    subscriber?.({ currentVal: state });
+    flushSync();
+    expect(subscriptions).toBe(1);
+    instance.dispose();
+    expect(releases).toBe(1);
+  } finally { delete (globalThis as Record<string, unknown>)[frameworkHarnessKey]; }
 });

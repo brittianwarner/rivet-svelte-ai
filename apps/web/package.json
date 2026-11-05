@@ -4,25 +4,30 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ./node_modules/vite/bin/vite.js dev --port 5173 --strictPort",
-    "build": "node ./node_modules/vite/bin/vite.js build",
-    "preview": "node build/index.js",
-    "check": "node ./node_modules/@sveltejs/kit/svelte-kit.js sync && node ./node_modules/svelte-check/bin/svelte-check --tsconfig ./tsconfig.json"
+    "dev": "vite dev --port 5173 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsgo --tsconfig ./tsconfig.json",
+    "start": "node build/index.js"
   },
   "dependencies": {
     "@example/api": "workspace:*",
     "@example/wire": "workspace:*",
     "@rivetkit/svelte": "workspace:*",
-    "@sveltejs/adapter-node": "^5.3.2",
-    "@sveltejs/kit": "^2.43.2",
-    "rivetkit": "2.3.17",
-    "svelte": "^5.57.0"
+    "@sveltejs/adapter-node": "^6.0.1",
+    "@sveltejs/kit": "^3.1.1",
+    "rivetkit": "3.0.1",
+    "svelte": "^5.57.3"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^6.2.0",
-    "@types/node": "^22.18.0",
-    "svelte-check": "^4.3.2",
-    "typescript": "^5.9.2",
-    "vite": "^7.1.5"
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/node": "^26.6.6",
+    "svelte-check": "^4.7.8",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.5",
+    "@typescript/native": "npm:typescript@^7.0.2"
+  },
+  "imports": {
+    "#lib/*": "./src/lib/*"
   }
 }

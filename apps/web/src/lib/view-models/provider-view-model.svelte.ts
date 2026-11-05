@@ -18,7 +18,8 @@ export class ProviderViewModel {
       this.model = body.model;
       this.error = null;
     } catch (error) {
-      this.error = error instanceof Error ? error.message : "The API is not ready.";
+      this.error =
+        error instanceof Error ? error.message : "The API is not ready.";
     }
   }
 }

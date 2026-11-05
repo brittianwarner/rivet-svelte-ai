@@ -8,7 +8,7 @@ export interface ChatMessage {
 
 /** Live status of the conversation actor. */
 export interface ChatStatusSnapshot {
-  state: "idle" | "thinking" | "error";
+  state: "idle" | "queued" | "thinking" | "error";
   updatedAt: number;
   error?: string;
 }
@@ -42,8 +42,10 @@ export interface ProviderStatus {
   model: string | null;
 }
 
-export const CHAT_STATE_LIMIT = 200;
-export const CHAT_PROMPT_LIMIT = 40;
+export const CHAT_STATE_LIMIT = 40;
+export const CHAT_STATE_BYTES = 64 * 1024;
+export const MAX_CHAT_RESPONSE_LENGTH = 8_000;
+export const CHAT_PROMPT_LIMIT = 20;
 export const MAX_CHAT_MESSAGE_LENGTH = 8_000;
 
 /** Counter names used in the actor key and the Hono route. */

@@ -5,9 +5,9 @@ export function actorSocketOptions(): {
   getParams: () => Promise<{ token?: string }>;
   actionDefaults: { throwOnError: false; timeout: number };
 } {
+  const token = getActorToken();
   return {
     getParams: async () => {
-      const token = getActorToken();
       return token ? { token } : {};
     },
     actionDefaults: {

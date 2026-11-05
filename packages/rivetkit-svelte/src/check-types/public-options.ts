@@ -62,3 +62,32 @@ const serializedActorError: ActorErrorLike = {
 void (0 as unknown as DirectFactoryResultIsNotAny);
 void preservedActionDefaults;
 void serializedActorError;
+
+
+// These calls are compile-time contracts, never executed by the application.
+import { actor, event, setup } from "rivetkit";
+import type { ReactiveActorHandle, ActorState } from "../lib/index.js";
+const typedCounter = actor({
+  state: { count: 0 },
+  events: { changed: event<number>() },
+  actions: { increment: (c, by: number) => c.state.count += by },
+});
+const typedRegistry = setup({ use: { counter: typedCounter } });
+function checkActorTypes(handle: ReactiveActorHandle<typeof typedRegistry, "counter">, state: ActorState<typeof typedRegistry, "counter">) {
+  const result: Promise<number | undefined> = handle.increment(1);
+  const stateResult: Promise<number | undefined> = state.increment(1);
+  // @ts-expect-error Incorrect action argument.
+  handle.increment("1");
+  // @ts-expect-error Unknown action.
+  handle.missingAction();
+  // @ts-expect-error Incorrect result type.
+  const wrong: Promise<string> = handle.increment(1);
+  handle.onEvent("changed", (count) => { const value: number = count; void value; });
+  // @ts-expect-error Unknown event.
+  handle.onEvent("missing", () => {});
+  // @ts-expect-error Incorrect event payload.
+  handle.onEvent("changed", (count: string) => {});
+  void result; void stateResult; void wrong;
+}
+
+void checkActorTypes;

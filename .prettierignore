@@ -1,0 +1,10 @@
+node_modules
+bun.lock
+.svelte-kit
+.turbo
+.rivet
+build
+dist
+playwright-report
+test-results
+packages/rivetkit-svelte/src

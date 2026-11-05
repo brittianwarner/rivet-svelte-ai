@@ -18,6 +18,8 @@ export class CounterViewModel {
   httpPending = $state(false);
   actor = $state.raw<CounterActor | null>(null);
 
+  #rivet = getRivet();
+  #socketOptions = actorSocketOptions();
   #unmount: (() => void) | null = null;
   #pullId = 0;
 
@@ -61,17 +63,22 @@ export class CounterViewModel {
     }
 
     const next = await actor.increment(1);
+    if (this.actor !== actor) return;
     if (next == null) {
-      this.error = getActionError(actor)?.message ?? "Couldn't increment — try again";
+      this.error =
+        getActionError(actor)?.message ?? "Couldn't increment — try again";
       return;
     }
 
-    this.count = next;
+    this.count = Math.max(this.count, next);
     this.error = null;
   }
 
   /** Same actor, reached through Hono instead of the browser socket. */
   async incrementViaHttp(): Promise<void> {
+    if (this.httpPending) return;
+    const name = this.name;
+    const actor = this.actor;
     this.httpPending = true;
     this.error = null;
 
@@ -84,14 +91,22 @@ export class CounterViewModel {
           body: JSON.stringify({ by: 1 }),
         },
       );
-      const body = (await response.json()) as { count?: number; error?: string };
+      const body = (await response.json()) as {
+        count?: number;
+        error?: string;
+      };
+      if (this.name !== name || this.actor !== actor) return;
       if (!response.ok || typeof body.count !== "number") {
         this.error = body.error ?? "Couldn't increment through the API";
         return;
       }
-      this.count = body.count;
+      this.count = Math.max(this.count, body.count);
     } catch (error) {
-      this.error = error instanceof Error ? error.message : "Couldn't increment through the API";
+      if (this.name !== name || this.actor !== actor) return;
+      this.error =
+        error instanceof Error
+          ? error.message
+          : "Couldn't increment through the API";
     } finally {
       this.httpPending = false;
     }
@@ -100,13 +115,14 @@ export class CounterViewModel {
   #open(name: string): void {
     this.#close();
     this.name = name;
-    const actor = getRivet().createReactiveActor({
+    this.count = 0;
+    const actor = this.#rivet.createReactiveActor({
       name: "counter",
       key: ["counter", name],
-      ...actorSocketOptions(),
+      ...this.#socketOptions,
     });
     actor.onEvent("newCount", (count: number) => {
-      this.count = count;
+      this.count = Math.max(this.count, count);
     });
     this.actor = actor;
     this.#unmount = actor.mount();
@@ -122,9 +138,14 @@ export class CounterViewModel {
   async #pullCount(actor: CounterActor, name: string): Promise<void> {
     const pullId = ++this.#pullId;
     const count = await actor.getCount();
-    if (pullId !== this.#pullId || this.name !== name || this.actor !== actor || count == null) {
+    if (
+      pullId !== this.#pullId ||
+      this.name !== name ||
+      this.actor !== actor ||
+      count == null
+    ) {
       return;
     }
-    this.count = count;
+    this.count = Math.max(this.count, count);
   }
 }

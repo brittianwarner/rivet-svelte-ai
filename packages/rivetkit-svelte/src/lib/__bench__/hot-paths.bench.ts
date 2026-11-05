@@ -17,7 +17,14 @@
  * Run with: `bun run --filter @rivetkit/svelte bench`
  */
 import "../__tests__/runes-shim.js";
-import { bench, describe, vi, beforeAll } from "vitest";
+import { test, describe, vi, beforeAll } from "vitest";
+
+// Vitest 5 registers measurements inside a test's benchmark context.
+function benchmark(name: string, measure: () => void | Promise<void>) {
+  test(name, async ({ bench }) => {
+    await bench(name, measure).run({ time: 100, warmupTime: 50 });
+  });
+}
 
 // Benchmarks intentionally mount handles in jsdom-like test context. Suppress
 // the development SSR warning so stderr does not dominate benchmark output.
@@ -163,39 +170,39 @@ beforeAll(() => {
 // ---------------------------------------------------------------------------
 
 describe("proxy.get — known property (state getter)", () => {
-  bench("plainActor.connStatus", () => {
+  benchmark("plainActor.connStatus", () => {
     void plainActor.connStatus;
   });
-  bench("plainActor.isConnected", () => {
+  benchmark("plainActor.isConnected", () => {
     void plainActor.isConnected;
   });
-  bench("interceptedActor.isMutating", () => {
+  benchmark("interceptedActor.isMutating", () => {
     void interceptedActor.isMutating;
   });
 });
 
 describe("proxy.get — unknown property (forwarded actor method)", () => {
-  bench("plainActor.ping (cached method)", () => {
+  benchmark("plainActor.ping (cached method)", () => {
     void plainActor.ping;
   });
-  bench("interceptedActor.ping (cached, wrapped)", () => {
+  benchmark("interceptedActor.ping (cached, wrapped)", () => {
     void interceptedActor.ping;
   });
-  bench("plainActor.ping() call", () => {
+  benchmark("plainActor.ping() call", () => {
     plainActor.ping();
   });
-  bench("interceptedActor.ping() call (await)", async () => {
+  benchmark("interceptedActor.ping() call (await)", async () => {
     await interceptedActor.ping();
   });
 });
 
 describe("proxy.get — fan-out reads across 32 actors", () => {
-  bench("read connStatus on 32 actors", () => {
+  benchmark("read connStatus on 32 actors", () => {
     for (let i = 0; i < fanOutActors.length; i++) {
       void fanOutActors[i].connStatus;
     }
   });
-  bench("read ping on 32 actors", () => {
+  benchmark("read ping on 32 actors", () => {
     for (let i = 0; i < fanOutActors.length; i++) {
       void fanOutActors[i].ping;
     }
@@ -204,19 +211,19 @@ describe("proxy.get — fan-out reads across 32 actors", () => {
 
 describe("createReactiveActor construction and mount", () => {
   let i = 0;
-  bench("construct handle only", () => {
+  benchmark("construct handle only", () => {
     rivet.createReactiveActor({
       name: "chat" as never,
       key: [`cold-${i++}`],
     });
   });
-  bench("construct handle only, with actionDefaults", () => {
+  benchmark("construct handle only, with actionDefaults", () => {
     rivetWithDefaults.createReactiveActor({
       name: "chat" as never,
       key: [`cold-int-${i++}`],
     });
   });
-  bench("construct + mount", () => {
+  benchmark("construct + mount", () => {
     const actor = rivet.createReactiveActor({
       name: "chat" as never,
       key: [`cold-mount-${i++}`],
@@ -225,7 +232,7 @@ describe("createReactiveActor construction and mount", () => {
     unmount();
     actor.dispose();
   });
-  bench("construct + mount, with actionDefaults", () => {
+  benchmark("construct + mount, with actionDefaults", () => {
     const actor = rivetWithDefaults.createReactiveActor({
       name: "chat" as never,
       key: [`cold-int-mount-${i++}`],
@@ -238,7 +245,7 @@ describe("createReactiveActor construction and mount", () => {
     name: "chat" as never,
     key: ["stable-mount"],
   });
-  bench("mount + unmount existing handle", () => {
+  benchmark("mount + unmount existing handle", () => {
     const unmount = stableActor.mount();
     unmount();
   });
@@ -262,10 +269,10 @@ describe("applyState — subscribe firing", () => {
     } as typeof mockState,
   ];
   let idx = 0;
-  bench("subscribe push (rotating statuses)", () => {
+  benchmark("subscribe push (rotating statuses)", () => {
     applyStateCb?.({ currentVal: tickStates[idx++ & 3]! });
   });
-  bench("subscribe push (identical value)", () => {
+  benchmark("subscribe push (identical value)", () => {
     applyStateCb?.({ currentVal: tickStates[0]! });
   });
 });
@@ -273,10 +280,10 @@ describe("applyState — subscribe firing", () => {
 describe("extract(MaybeGetter)", () => {
   const direct = { name: "chat", key: ["k"] };
   const getter = () => ({ name: "chat", key: ["k"] });
-  bench("static value", () => {
+  benchmark("static value", () => {
     extract(direct);
   });
-  bench("getter thunk", () => {
+  benchmark("getter thunk", () => {
     extract(getter);
   });
 });
@@ -289,19 +296,19 @@ describe("preloadActor hash", () => {
     return hash;
   }
 
-  bench("JSON.stringify hash (string key)", () => {
+  benchmark("JSON.stringify hash (string key)", () => {
     JSON.stringify(["doc", ["abc-123"], null]);
   });
-  bench("JSON.stringify hash (compound key)", () => {
+  benchmark("JSON.stringify hash (compound key)", () => {
     JSON.stringify(["doc", ["org-1", "user-2", "thread-3"], null]);
   });
-  bench("length-prefixed hash (string key)", () => {
+  benchmark("length-prefixed hash (string key)", () => {
     lengthPrefixedHash("doc", ["abc-123"]);
   });
-  bench("length-prefixed hash (compound key)", () => {
+  benchmark("length-prefixed hash (compound key)", () => {
     lengthPrefixedHash("doc", ["org-1", "user-2", "thread-3"]);
   });
-  bench("manual hash (string key)", () => {
+  benchmark("manual hash (string key)", () => {
     "doc\x00abc-123";
   });
 });
@@ -309,13 +316,13 @@ describe("preloadActor hash", () => {
 describe("mergeActionDefaults equivalent", () => {
   const a = { timeout: 30_000, throwOnError: false as boolean };
   const b = { timeout: 60_000 };
-  bench("shallow spread", () => {
+  benchmark("shallow spread", () => {
     void { ...a, ...b };
   });
 });
 
 describe("interceptedActor — concurrent actions", () => {
-  bench("Promise.all(8 × ping)", async () => {
+  benchmark("Promise.all(8 × ping)", async () => {
     await Promise.all([
       interceptedActor.ping(),
       interceptedActor.ping(),
@@ -330,7 +337,7 @@ describe("interceptedActor — concurrent actions", () => {
 });
 
 describe("whenConnected (immediate-resolve path)", () => {
-  bench("already-connected fast path", async () => {
+  benchmark("already-connected fast path", async () => {
     await plainActor.whenConnected();
   });
 });
@@ -339,19 +346,19 @@ describe("whenConnected (immediate-resolve path)", () => {
 // at the engine level so we can subtract that from the interceptor numbers
 // and see how much overhead is intrinsic to async/await vs added by us.
 describe("async/await floor", () => {
-  bench("bare await Promise.resolve()", async () => {
+  benchmark("bare await Promise.resolve()", async () => {
     await Promise.resolve(42);
   });
-  bench("await baseConnection.ping() (no proxy)", async () => {
+  benchmark("await baseConnection.ping() (no proxy)", async () => {
     await baseConnection.ping();
   });
-  bench("await plainActor.ping() (proxy, no interceptor)", async () => {
+  benchmark("await plainActor.ping() (proxy, no interceptor)", async () => {
     await plainActor.ping();
   });
-  bench("await noTimeoutActor.ping() (interceptor, no timeout)", async () => {
+  benchmark("await noTimeoutActor.ping() (interceptor, no timeout)", async () => {
     await noTimeoutActor.ping();
   });
-  bench("await callbackActor.ping() (interceptor + callbacks)", async () => {
+  benchmark("await callbackActor.ping() (interceptor + callbacks)", async () => {
     await callbackActor.ping();
   });
 });

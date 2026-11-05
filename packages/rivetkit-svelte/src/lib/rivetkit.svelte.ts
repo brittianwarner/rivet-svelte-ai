@@ -203,21 +203,28 @@ type ActionInterceptor = (
 // Shared types
 // ---------------------------------------------------------------------------
 
-/**
- * Proxied actor methods forwarded from the underlying connection at runtime.
- *
- * RivetKit's deeply nested conditional types inside `ActorConn` exceed
- * TypeScript's instantiation depth limit when
- * wrapped in `Omit`. This permissive index signature preserves the
- * "call any actor action on the object" DX while avoiding TS2589.
- * All reactive state properties above remain fully typed.
- *
- * **Note:** Actor method calls are untyped at the package level due to
- * this TypeScript constraint. Consumers should use typed client interfaces
- * from their actor registry for type safety at the call site.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ProxiedActorMethods = Record<string, (...args: any[]) => any>;
+/** Map the action definitions directly, avoiding mapped types over ActorConn. */
+type ActionMethods<Actions> = 0 extends (1 & Actions)
+  ? Record<string, (...args: any[]) => any>
+  : {
+  [Name in keyof Actions]: Actions[Name] extends
+    (context: any, ...args: infer Args) => infer Result
+      ? (...args: Args) => Promise<Awaited<Result> | undefined>
+      : Actions[Name] extends Record<string, unknown>
+        ? ActionMethods<Actions[Name]>
+        : never;
+};
+
+type ProxiedActorMethods<
+  Registry extends AnyActorRegistry,
+  Name extends keyof ExtractActorsFromRegistry<Registry> & string,
+> = ActionMethods<NonNullable<ExtractActorsFromRegistry<Registry>[Name]["config"]["actions"]>>;
+
+type ActorEventListener<
+  Registry extends AnyActorRegistry,
+  Name extends keyof ExtractActorsFromRegistry<Registry> & string,
+> = ActorConn<ExtractActorsFromRegistry<Registry>[Name]> extends { on: infer Subscribe }
+  ? Subscribe : (event: string, handler: (...args: any[]) => void) => () => void;
 
 /**
  * Reactive action tracking state, available when `actionDefaults` is configured.
@@ -281,7 +288,7 @@ export type ActorState<
    * @param handler - Callback invoked when the event fires.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onEvent: (eventName: string, handler: (...args: any[]) => void) => void;
+  onEvent: ActorEventListener<Registry, ActorName>;
   /**
    * Returns a promise that resolves to `true` when the actor connects,
    * or `false` if the timeout elapses first.
@@ -293,7 +300,7 @@ export type ActorState<
    */
   whenConnected: (timeout?: number) => Promise<boolean>;
 } & ActionTrackingState &
-  ProxiedActorMethods;
+  ProxiedActorMethods<Registry, ActorName>;
 
 /**
  * Reactive actor handle returned by {@link RivetKit.createReactiveActor | createReactiveActor}.
@@ -364,7 +371,7 @@ export type ReactiveActorHandle<
    * @returns An unsubscribe function.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onEvent(eventName: string, handler: (...args: any[]) => void): () => void;
+  onEvent: ActorEventListener<Registry, ActorName>;
   /**
    * Returns a promise that resolves to `true` when the actor connects,
    * or `false` if the timeout elapses first.
@@ -376,7 +383,7 @@ export type ReactiveActorHandle<
    */
   whenConnected(timeout?: number): Promise<boolean>;
 } & ActionTrackingState &
-  ProxiedActorMethods;
+  ProxiedActorMethods<Registry, ActorName>;
 
 // ---------------------------------------------------------------------------
 // Proxy helper — wraps a getter-based inner object so unknown props
@@ -1521,12 +1528,16 @@ export function createRivetKitWithClient<Registry extends AnyActorRegistry>(
     function onEvent(
       eventName: string,
       handler: (...args: any[]) => void,
-    ): void {
+    ): () => void {
+      let active = true;
+      let unsubscribe: (() => void) | undefined;
       $effect(() => {
         const conn = core.getConnection();
-        if (!conn) return;
-        return conn.on(eventName, handler);
+        if (!active || !conn) return;
+        unsubscribe = conn.on(eventName, handler);
+        return () => { unsubscribe?.(); unsubscribe = undefined; };
       });
+      return () => { active = false; unsubscribe?.(); unsubscribe = undefined; };
     }
 
     // Reactive state is served by core.createProxy's inline switch, so the
@@ -1720,6 +1731,14 @@ export function createRivetKitWithClient<Registry extends AnyActorRegistry>(
         activeUnmounts.delete(release);
         frameworkUnmount();
         if (activeUnmounts.size === 0) {
+          // The bridge evicts zero-ref entries on the next timer turn. Drop
+          // our closures now so a later mount resolves the current entry.
+          // Keep registered listeners so remount can bind them again.
+          unsubscribeDerived?.();
+          unsubscribeDerived = null;
+          frameworkMount = null;
+          core.cancelPendingConnections();
+          core.detach();
           inspector?.unregister(inspectorOwnerId);
         }
       };
