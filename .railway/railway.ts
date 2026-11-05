@@ -31,7 +31,7 @@ export default defineRailway(() => {
     env: {
       PORT: "6420",
       RIVET__GUARD__HOST: "::",
-      RIVET__AUTH__ADMIN_TOKEN: { generator: "${{secret(64)}}" },
+      RIVET__AUTH__ADMIN_TOKEN: { generator: "secret(64)" },
       RIVET__STORAGE__LOG_DIRECTORY: "/var/lib/rivet/log",
       RIVET__STORAGE__AUTO_PROVISION_PARTITIONS: "1",
       RIVET__STORAGE__BALANCING__ENABLED: "false",
