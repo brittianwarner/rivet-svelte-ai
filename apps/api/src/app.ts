@@ -7,8 +7,11 @@ import { Hono } from "hono";
 interface ApiDependencies {
   origins: string[];
   endpoint: () => string;
+  namespace?: string;
   token: () => string | null;
   provider: () => ProviderChoice;
+  issueBrowserToken?: () => Promise<{ token: string; expiresAt: number }>;
+  actorHealthy?: () => Promise<boolean>;
   increment: (name: string, by: number) => Promise<number>;
 }
 
@@ -22,6 +25,14 @@ export function createApp(deps: ApiDependencies) {
   });
 
   app.get("/health", (c) => c.json({ ok: true }));
+  app.get("/health/actors", async (c) => {
+    try {
+      const ok = (await deps.actorHealthy?.()) ?? false;
+      return c.json({ ok }, ok ? 200 : 503);
+    } catch {
+      return c.json({ ok: false }, 503);
+    }
+  });
 
   app.get("/ready", (c) => {
     const choice = deps.provider();
@@ -34,9 +45,26 @@ export function createApp(deps: ApiDependencies) {
   app.get("/client-config", (c) =>
     c.json({
       rivetEndpoint: deps.endpoint(),
+      ...(deps.namespace ? { rivetNamespace: deps.namespace } : {}),
       actorToken: deps.token(),
+      ...(deps.issueBrowserToken ? { authenticatedEngine: true } : {}),
     }),
   );
+
+  // This is an anonymous demo grant, not user identity or per-session authorization.
+  app.post("/client-token", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const origin = c.req.header("origin");
+    if (origin && !WEB_ORIGINS.includes(origin))
+      return c.json({ error: "origin_not_allowed" }, 403);
+    if (!deps.issueBrowserToken)
+      return c.json({ error: "not_configured" }, 404);
+    try {
+      return c.json(await deps.issueBrowserToken());
+    } catch {
+      return c.json({ error: "Actor service unavailable. Please retry." }, 503);
+    }
+  });
 
   app.post(
     "/counters/:name/increment",

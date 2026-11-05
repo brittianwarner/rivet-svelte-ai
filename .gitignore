@@ -11,3 +11,5 @@ build/
 !.env.example
 playwright-report/
 test-results/
+.railway/*plan*.json
+.release-version

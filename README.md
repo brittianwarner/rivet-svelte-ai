@@ -1,5 +1,7 @@
 # rivet + svelte
 
+[Try the playground at svelteactors.dev](https://svelteactors.dev).
+
 Build apps that stay in sync with **RivetKit 3.0.1**, **Svelte 5**, and **SvelteKit 3**. Start with a working app: independent counter actors, live Svelte components, and a session that remembers what you create. Try the 3D playground, inspect the code, then make it yours.
 
 This is a community-built starter with a workspace Svelte adapter. The learning page renders on the server; actor connections open in the browser. An optional streaming chat implementation is included in the repository.
@@ -169,3 +171,7 @@ Rivet upstream: [quickstart](https://rivet.dev/actors/docs/quickstart/), [state]
 ## License
 
 MIT for the starter. `packages/rivetkit-svelte` is Apache-2.0; preserve its license and attribution when extracting it.
+
+## Deploy to Railway
+
+Self-host Rivet 3.0 alongside the web app and actor runner using [Railway infrastructure as code](.railway/railway.ts). The [deployment guide](docs/deployment.md#railway-self-hosted-rivet-30) covers provisioning, private networking, scoped browser credentials, and restart acceptance. No Rivet Cloud account or AI key is required.

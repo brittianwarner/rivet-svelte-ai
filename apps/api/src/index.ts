@@ -14,12 +14,36 @@ import { chooseProvider } from "./model.ts";
 
 loadRootEnv();
 const endpoint = publicEndpoint();
-const client = createClient<typeof registry>(endpoint);
+const client = createClient<typeof registry>({
+  endpoint: process.env.RIVET_ENDPOINT || endpoint,
+});
 const app = createApp({
   origins: allowedOrigins(),
   endpoint: () => endpoint,
+  namespace: process.env.RIVET_NAMESPACE,
   token: actorToken,
   provider: chooseProvider,
+  actorHealthy: async () => (await registry.routes.health()).ok,
+  ...(process.env.RIVET_ENDPOINT
+    ? {
+        issueBrowserToken: () =>
+          client.auth.issueToken({
+            expiresIn: 900,
+            grants: [
+              {
+                resource: "actor",
+                target: "any",
+                operations: ["create", "read"],
+              },
+              {
+                resource: "actor_gateway",
+                target: "any",
+                operations: ["create", "read"],
+              },
+            ],
+          }),
+      }
+    : {}),
   increment: (name, by) =>
     client.counter
       .getOrCreate(["counter", name], {
@@ -40,5 +64,5 @@ serve(
   },
 );
 
-// Local file engine + in-process runner. Browser clients use RIVET_PUBLIC_ENDPOINT.
+// Browser clients use the public endpoint; the runner uses the private endpoint.
 registry.start();

@@ -1,0 +1,13 @@
+**/node_modules
+**/build
+**/dist
+**/.svelte-kit
+**/.turbo
+**/.rivet
+**/.env
+**/.env.*
+.git
+.railway
+test-results
+playwright-report
+**/*.log

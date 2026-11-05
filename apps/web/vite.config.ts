@@ -5,7 +5,13 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   envDir: "../..",
-  plugins: [sveltekit({ adapter: adapter(), preprocess: vitePreprocess() })],
+  plugins: [
+    sveltekit({
+      adapter: adapter(),
+      preprocess: vitePreprocess(),
+      paths: { origin: process.env.WEB_ORIGIN || undefined },
+    }),
+  ],
   server: {
     host: "127.0.0.1",
     port: 5173,

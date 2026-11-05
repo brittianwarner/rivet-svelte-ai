@@ -27,7 +27,7 @@ export default defineConfig({
     },
     {
       command: "bun run --filter @example/api start",
-      url: "http://127.0.0.1:3002/health",
+      url: "http://127.0.0.1:3002/health/actors",
       timeout: 120_000,
       env: {
         API_PORT: "3002",

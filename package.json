@@ -17,12 +17,16 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:e2e:production": "bun run build && E2E_PRODUCTION=1 bun run test:e2e",
-    "test:restart": "node apps/api/tests/restart.ts"
+    "test:restart": "node apps/api/tests/restart.ts",
+    "test:deployment": "node apps/api/tests/deployment.ts",
+    "railway:plan": "railway config plan",
+    "railway:apply": "railway config apply"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "prettier": "^3.9.10",
     "prettier-plugin-svelte": "^4.1.1",
+    "railway": "3.16.0",
     "turbo": "^2.11.10"
   },
   "engines": {
