@@ -1,14 +1,14 @@
 import { expect, test } from "@playwright/test";
 
 for (const failure of ["denied", "quota"] as const) {
-  test(`playground and new chat work when session storage is ${failure}`, async ({
+  test(`playground works when browser storage is ${failure}`, async ({
     page,
   }) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.addInitScript((mode) => {
       if (mode === "denied") {
-        Object.defineProperty(window, "sessionStorage", {
+        Object.defineProperty(window, "localStorage", {
           get() {
             throw new DOMException("Storage denied", "SecurityError");
           },
@@ -20,19 +20,17 @@ for (const failure of ["denied", "quota"] as const) {
       }
     }, failure);
     await page.goto("/");
-    const counter = page.getByRole("region", { name: "The realtime counter." });
+    const counter = page.getByRole("region", { name: "Svelte client" });
     await expect(
       counter.getByRole("button", { name: "+ Increment", exact: true }),
     ).toBeEnabled();
-    const chat = page.getByRole("region", {
-      name: "A conversation with memory.",
-    });
-    await expect(chat.locator(".connection-badge")).toHaveText("connected");
-    await chat.getByRole("button", { name: "New chat", exact: true }).click();
-    await expect(chat.locator(".connection-badge")).toHaveText("connected");
     await expect(
-      counter.getByRole("button", { name: "+ Increment", exact: true }),
-    ).toBeEnabled();
+      page.getByLabel("Connected actors", { exact: true }),
+    ).toHaveText("1");
+    await page.getByRole("button", { name: "Add actor", exact: true }).click();
+    await expect(
+      page.getByLabel("Connected actors", { exact: true }),
+    ).toHaveText("2");
     expect(errors).toEqual([]);
   });
 }

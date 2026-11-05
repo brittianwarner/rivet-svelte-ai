@@ -36,7 +36,9 @@ The actual counter also checks demo connection parameters and integer overflow. 
 
 ## 2. Register the definition
 
-The registry in `apps/api/src/actors.ts` passes `{ counter, chat }` to `setup({ use: ... })`. A definition describes a kind of actor. `getOrCreate(["counter", "demo"])` selects one instance of that kind. A different key selects independent state.
+The registry in `apps/api/src/actors.ts` passes `{ counter, chat, session }` to `setup({ use: ... })`. A definition describes a kind of actor. `getOrCreate(["counter", "demo"])` selects one instance of that kind. A different key selects independent state.
+
+The homepage uses a visitor's session actor to create and remember counter keys. See `apps/api/src/actors/session.ts` for typed actor-to-actor calls and `apps/web/src/lib/view-models/session-view-model.svelte.ts` for restoration. The session stores membership; each counter still owns its value. The direct counter example below works independently of the session registry.
 
 Register a new actor next to the existing definitions. The exported registry type gives clients their available action names, arguments, and return types.
 

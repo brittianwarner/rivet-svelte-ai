@@ -56,3 +56,32 @@ export const MISSING_KEY_MESSAGE =
 
 export const DEFAULT_OPENROUTER_MODEL = "google/gemini-3.8-flash";
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
+
+/** Public demo session membership; this is persistence, not user authentication. */
+export interface SessionActorRecord {
+  key: string;
+  label: string;
+}
+
+export interface SessionSnapshot {
+  actors: SessionActorRecord[];
+  revision: number;
+}
+
+export const SESSION_ACTOR_LIMIT = 7;
+/** crypto.randomUUID() produces this canonical lowercase representation. */
+export const SESSION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Two full UUIDs fit a counter key exactly, without collisions from truncation. */
+export function sessionCounterKey(
+  sessionId: string,
+  requestId: string,
+): string {
+  const session = sessionId.toLowerCase();
+  const request = requestId.toLowerCase();
+  if (!SESSION_ID_PATTERN.test(session) || !SESSION_ID_PATTERN.test(request)) {
+    throw new Error("Session and request IDs must be UUIDs.");
+  }
+  return session.replaceAll("-", "") + request.replaceAll("-", "");
+}

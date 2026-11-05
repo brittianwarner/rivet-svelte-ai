@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { startIsolatedEngine } from "./engine.ts";
 
 const directory = await mkdtemp(join(tmpdir(), "rivet-browser-engine-"));
-const engine = await startIsolatedEngine(directory, 6540);
+const port = Number(process.env.E2E_ENGINE_PORT || 6540);
+const engine = await startIsolatedEngine(directory, port);
 let stopping = false;
 async function stop() {
   if (stopping) return;
@@ -18,4 +19,4 @@ process.on("SIGTERM", () => void stop());
 engine.child.on("exit", () => {
   if (!stopping) process.exit(1);
 });
-console.log("Isolated Rivet browser-test engine listening on port 6540.");
+console.log(`Isolated Rivet browser-test engine listening on port ${port}.`);

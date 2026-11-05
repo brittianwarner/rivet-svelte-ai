@@ -1,29 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import ChatPanel from "./ChatPanel.svelte";
-  import CounterPanel from "./CounterPanel.svelte";
-  import {
-    ChatViewModel,
-    CounterViewModel,
-    ProviderViewModel,
-  } from "#lib/view-models/index.js";
+  import ActorLab from "./ActorLab.svelte";
+  import { SessionViewModel } from "#lib/view-models/session-view-model.svelte.js";
 
-  const chat = new ChatViewModel();
-  const counter = new CounterViewModel();
-  const provider = new ProviderViewModel();
-
-  onMount(() => {
-    const releaseChat = chat.connect();
-    const releaseCounter = counter.connect();
-    void provider.load();
-    return () => {
-      releaseChat();
-      releaseCounter();
-    };
-  });
+  const session = new SessionViewModel();
+  onMount(() => session.connect());
 </script>
 
-<div class="playground-grid">
-  <CounterPanel {counter} />
-  <ChatPanel {chat} {provider} />
-</div>
+<ActorLab {session} />
