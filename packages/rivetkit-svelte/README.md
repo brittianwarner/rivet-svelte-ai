@@ -218,7 +218,7 @@ These APIs remain part of the public surface:
   import { rivetContext } from "#lib/rivet.js";
   import type { AppRegistry } from "./registry";
 
-  let { roomId } = $props<{ roomId: string }>();
+  let { roomId }: { roomId: string } = $props();
 
   const { useActor } = rivetContext.get();
 

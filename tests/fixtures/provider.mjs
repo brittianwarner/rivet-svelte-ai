@@ -12,14 +12,19 @@ globalThis.fetch = async (input, init) => {
       { status: 401 },
     );
   }
-  const chunks = prompt.includes("[slow]")
-    ? ["Partial reply", ...Array.from({ length: 40 }, () => " continuing")]
-    : ["Hello", " from the", " local model."];
+  const chunks = prompt.includes("[long]")
+    ? Array.from({ length: 20 }, (_, i) =>
+        `Streaming line ${i + 1}: a reply you can follow.\n`.repeat(3),
+      )
+    : prompt.includes("[slow]")
+      ? ["Partial reply", ...Array.from({ length: 40 }, () => " continuing")]
+      : ["Hello", " from the", " local model."];
   let timer;
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
       let index = 0;
+      const firstTokenAt = Date.now() + (prompt.includes("[wait]") ? 2000 : 0);
       const emit = (delta, finish_reason = null) =>
         controller.enqueue(
           encoder.encode(
@@ -32,6 +37,7 @@ globalThis.fetch = async (input, init) => {
           controller.error(request.signal.reason);
           return;
         }
+        if (Date.now() < firstTokenAt) return;
         if (index < chunks.length) emit({ content: chunks[index++] });
         else {
           clearInterval(timer);

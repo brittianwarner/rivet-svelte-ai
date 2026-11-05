@@ -7,6 +7,7 @@ const servers = Array.isArray(base.webServer)
 export default defineConfig({
   ...base,
   testMatch: "ai.spec.ts",
+  outputDir: "test-results/ai",
   webServer: servers.map((server) =>
     server.command.includes("@example/api")
       ? {

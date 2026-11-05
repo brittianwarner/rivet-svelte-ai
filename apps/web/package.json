@@ -17,15 +17,17 @@
     "@sveltejs/adapter-node": "^6.0.1",
     "@sveltejs/kit": "^3.1.1",
     "rivetkit": "3.0.1",
-    "svelte": "^5.57.3"
+    "svelte": "^5.57.3",
+    "three": "^0.187.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/node": "^26.6.6",
+    "@types/three": "^0.187.0",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "svelte-check": "^4.7.8",
     "typescript": "~6.0.3",
-    "vite": "^8.3.5",
-    "@typescript/native": "npm:typescript@^7.0.2"
+    "vite": "^8.3.5"
   },
   "imports": {
     "#lib/*": "./src/lib/*"

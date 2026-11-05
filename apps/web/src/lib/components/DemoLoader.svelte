@@ -50,7 +50,7 @@
   {#key config}<Connected {config} />{/key}
 {:else}
   <div class="connection-placeholder" aria-live="polite">
-    <span class="eyebrow">LOCAL PLAYGROUND</span>
+    <span class="eyebrow">ACTOR PLAYGROUND</span>
     <h3>
       {loading
         ? "Connecting to your actors…"
@@ -58,7 +58,7 @@
     </h3>
     <p>
       {error ??
-        "The examples connect when the API is running. No account or API key required for the counter."}
+        "Connecting to Rivet. This counter demo needs no account or AI key."}
     </p>
     {#if !loading}<button onclick={() => void connect()}
         >Try connection again <span aria-hidden="true">↗</span></button

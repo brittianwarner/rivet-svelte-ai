@@ -4,10 +4,10 @@
 </script>
 
 <svelte:head>
-  <title>Rivet + SvelteKit — Build something stateful.</title>
+  <title>rivet + svelte</title>
   <meta
     name="description"
-    content="Start building with Rivet 3, Svelte 5, and SvelteKit. Typed actors, realtime state, and streaming AI in one practical starter."
+    content="Build apps that stay in sync with Rivet Actors, Svelte 5, and SvelteKit. Explore the live playground, then make this community-built starter your own."
   />
 </svelte:head>
 

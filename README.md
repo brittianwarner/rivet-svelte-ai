@@ -1,6 +1,8 @@
-# Rivet + SvelteKit
+# rivet + svelte
 
-A practical starter for **RivetKit 3.0.1**, **Svelte 5**, and **SvelteKit 3**. Build a realtime counter first, then explore an actor-backed streaming AI conversation. The learning page renders on the server; interactive examples connect in the browser.
+Build apps that stay in sync with **RivetKit 3.0.1**, **Svelte 5**, and **SvelteKit 3**. Start with a working app: independent counter actors, live Svelte components, and a session that remembers what you create. Try the 3D playground, inspect the code, then make it yours.
+
+This is a community-built starter with a workspace Svelte adapter. The learning page renders on the server; actor connections open in the browser. An optional streaming chat implementation is included in the repository.
 
 - A local Rivet engine starts automatically. No Docker, account, or AI key needed for the counter.
 - Actor actions and events stay typed from the API registry to Svelte.
@@ -19,11 +21,46 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-Open **http://127.0.0.1:5173**. Click **+ Increment**, then open a second tab. Both tabs use the `demo` counter and receive the same updates. **+ Via HTTP** reaches that same actor through the API. Change the actor key to create an independent counter.
+Open **http://127.0.0.1:5173**. Click **+ Increment**, then open a second tab. Your browser gets a session actor that remembers the counters you create. **Add actor** creates an independent counter in that session; another tab in the same browser restores the same registry. **+ Via HTTP** reaches the selected counter through the API. Use **Actor key → Connect** to attach a known counter to your session.
 
 The first install/start needs internet access for dependencies and the native engine. The default ports are 5173 (web), 3001 (API), 6440 (engine), and 6441 (Rivet runner). The local Services/agentOS host is disabled because these examples do not use it.
 
-## Add AI when you are ready
+## Your playground session
+
+A real `session` actor holds the registry of counters for each visitor. The browser stores only a random session ID in local storage; actor keys and labels live in Rivet state. Reloading restores the registry and reconnects its counters. If storage is unavailable, the current page still works with a temporary session.
+
+The session creates its starter counter and records every counter created or attached through the playground. Creation requests carry idempotency IDs so retries do not create duplicates. The playground limits each session to seven counters. **Disconnect actor** releases that browser connection while retaining the actor in the session; **Reconnect actor** opens it again. A reload reconnects all saved counters. The trash control in the canvas removes the selected actor from the session and closes its playground connections across tabs. It does not destroy the counter: **Undo** restores its key, label, and state. Removing every actor leaves an empty canvas after reload. The session keeps the latest 64 creation IDs to deduplicate recent retries. The connected count refers to counter sockets in this page; the session connection is shown separately.
+
+Sessions group actors; each counter still owns its state and receives actions directly. These anonymous demo sessions are browser identities, not authenticated accounts or an authorization boundary. Clearing local storage starts a fresh session; the previous actors are not destroyed.
+
+## Optional chat implementation
+
+The homepage intentionally shows counter actors only. Chat is kept as reusable code: [ChatPanel.svelte](apps/web/src/lib/components/ChatPanel.svelte), [ChatViewModel](apps/web/src/lib/view-models/chat-view-model.svelte.ts), [provider setup](apps/web/src/lib/view-models/provider-view-model.svelte.ts), and the [chat actor](apps/api/src/actors/chat.ts).
+
+To use it, render the panel below the existing `RivetProvider` and connect its view models during the browser lifecycle:
+
+```svelte
+<script lang="ts">
+  import { onMount } from "svelte";
+  import ChatPanel from "#lib/components/ChatPanel.svelte";
+  import { ChatViewModel, ProviderViewModel } from "#lib/view-models/index.js";
+
+  const chat = new ChatViewModel();
+  const provider = new ProviderViewModel();
+  onMount(() => {
+    const release = chat.connect();
+    void provider.load();
+    return () => {
+      release();
+      provider.dispose();
+    };
+  });
+</script>
+
+<ChatPanel {chat} {provider} />
+```
+
+Then configure the API's provider key:
 
 ```bash
 cp .env.example .env
@@ -44,6 +81,7 @@ This is a bounded conversation example: at most 40 recent messages / 64 KiB of s
 apps/
   api/src/
     actors/counter.ts       # Smallest complete actor example
+    actors/session.ts       # Durable per-visitor actor registry and creation
     actors/chat.ts          # Queue, streaming, cancellation, bounded state
     actors/chat-limits.ts   # Serialized transcript budget
     actors.ts               # Registry and local engine configuration
@@ -88,7 +126,9 @@ Read [architecture and scaling](docs/architecture.md), [deployment](docs/deploym
 | `bun run test:smoke`          | Exercise a running local API and engine without AI spending              |
 | `bun run format`              | Format maintained source and docs                                        |
 
-Before the first browser test, run `bunx playwright install chromium` (on Linux CI: `bunx playwright install --with-deps chromium`). Browser tests use a temporary engine data directory and start their own processes on ports 5174, 3002, 6540, 6541, and 6542. They test SSR, two-tab socket/HTTP updates, reload restoration, mobile overflow, connection retry, socket reconnection, storage denial, input limits, streamed AI replies, cancellation, provider failure, and conversation isolation. They do not call a paid model.
+Before the first browser test, run `bunx playwright install chromium` (on Linux CI: `bunx playwright install --with-deps chromium`). Browser tests use a temporary engine data directory and start their own processes on ports 5174, 3002, 6540, 6541, and 6542. They test the counter homepage, session restoration and isolation, idempotent actor creation, numbered 3D selection, two-tab socket/HTTP updates, mobile layout, connection retry, and input limits. A separate local provider fixture verifies the optional chat actor’s streamed socket events, cancellation, provider failure/retry, and conversation isolation. They do not call a paid model.
+
+`bun run test:restart` verifies checkpointed session membership and actor state across an API/runner restart while the engine stays running. The optional `FULL_ENGINE_RESTART=1` probe also requires a clean engine shutdown. Our local RivetKit 3.0.1 native-engine probe currently fails during shutdown with a singleton-coordinator fail-stop, so full engine recovery is not qualified by this template. Failed probes preserve diagnostic logs and print their location.
 
 ## Configuration
 

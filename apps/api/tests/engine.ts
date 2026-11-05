@@ -8,12 +8,13 @@ export const pause = (ms: number) =>
 
 export async function stopProcess(
   child: ChildProcess | undefined,
+  graceMs = 10_000,
 ): Promise<void> {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   const exited = new Promise<void>((resolve) =>
     child.once("exit", () => resolve()),
   );
-  const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+  const timer = setTimeout(() => child.kill("SIGKILL"), graceMs);
   child.kill("SIGTERM");
   try {
     await exited;
@@ -23,7 +24,11 @@ export async function stopProcess(
 }
 
 /** Launch directly: Rivet's automatic engine launcher uses a global runtime stamp. */
-export async function startIsolatedEngine(directory: string, port: number) {
+export async function startIsolatedEngine(
+  directory: string,
+  port: number,
+  overrides: Record<string, string> = {},
+) {
   const require = createRequire(import.meta.url);
   const rivetRequire = createRequire(require.resolve("rivetkit"));
   const { getEnginePath } = await import(
@@ -75,6 +80,7 @@ export async function startIsolatedEngine(directory: string, port: number) {
       RIVET__RUNTIME__WORKER_SHUTDOWN_DURATION: "1",
       RIVET__RUNTIME__GUARD_SHUTDOWN_DURATION: "1",
       RIVET__RUNTIME__FORCE_SHUTDOWN_DURATION: "10",
+      ...overrides,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

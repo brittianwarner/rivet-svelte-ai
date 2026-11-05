@@ -8,6 +8,8 @@ flowchart LR
   Kit --> API[Hono API]
   API --> Gateway
   Gateway --> Counter[Counter actor per key]
+  Gateway --> Session[Session actor per visitor]
+  Session -->|create / retain keys| Counter
   Gateway --> Chat[Chat actor per conversation]
   Chat --> Model[AI provider]
 ```
@@ -15,6 +17,8 @@ flowchart LR
 ## Ownership
 
 The actor owns business state. The view model owns its browser projection, pending UI state, subscriptions, and cleanup. The component owns rendering and user input. `packages/wire` contains contracts and constants, never credentials or server dependencies. Browser imports of the registry are type-only.
+
+The playground creates one anonymous session actor per browser identity. It persists a bounded registry of up to seven counter keys and labels in `c.state`; only the random session ID lives in browser storage. Session actions create or attach counters through Rivet's typed actor client, with idempotent creation IDs. Counters retain independent state and receive increments directly. Disconnecting a counter releases a page's socket without removing its registry entry. Removing a counter updates session membership, releases its pooled view model, and broadcasts the change to every tab; it never destroys the independently keyed counter. Undo reattaches the same key and label. An intentionally empty session stays empty on reload. Creation retry history is bounded to the latest 64 IDs. Reload restores all registered counters; other tabs subscribe to registry changes. A session is an index, not an authenticated account or a container that shares counter state.
 
 The frontend and API are independently deployable processes. The gateway is a third address, reachable by browsers. Keeping HTTP traffic same-origin avoids coupling the UI to an API host while allowing sockets to connect directly to Rivet.
 

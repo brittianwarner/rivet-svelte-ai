@@ -47,6 +47,11 @@ export class CounterViewModel {
     return () => this.#close();
   }
 
+  /** Release this view model's connection; the actor and its state remain in Rivet. */
+  disconnect(): void {
+    this.#close();
+  }
+
   /** Reconnect when the counter name changes. */
   useName(name: string): void {
     const next = name.trim().toLowerCase();
@@ -114,6 +119,7 @@ export class CounterViewModel {
 
   #open(name: string): void {
     this.#close();
+    this.error = null;
     this.name = name;
     this.count = 0;
     const actor = this.#rivet.createReactiveActor({
