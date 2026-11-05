@@ -2,6 +2,28 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
 
+test("browser credential outages retry slowly and recover", async ({
+  page,
+}) => {
+  let requests = 0;
+  await page.route("**/api/client-token", (route) => {
+    requests++;
+    return route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: '{"error":"unavailable"}',
+    });
+  });
+  await page.goto("/");
+  await expect.poll(() => requests).toBeGreaterThan(0);
+  await page.waitForTimeout(3_000);
+  expect(requests).toBeLessThanOrEqual(3);
+  await page.unroute("**/api/client-token");
+  await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "1",
+  );
+});
+
 test("SSR includes the learning page before JavaScript connects", async ({
   request,
 }) => {

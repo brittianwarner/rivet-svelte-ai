@@ -72,6 +72,13 @@ bun run test:restart                # Isolated API/runner restart acceptance
 - Dispose Three.js resources, observers, and animation loops. Keep the scene browser-only and preserve its fallback UI.
 - When changing onboarding or examples, update the relevant docs and `apps/web/src/lib/visuals/actor-examples.ts` so the copy and code match the working package.
 
+## Railway deployment
+
+- Infrastructure lives in `.railway/railway.ts` using the official `railway/iac` SDK. Read `.railway/README.md` and `docs/deployment.md` before changing deployment behavior. Do not add legacy `railway.json` or `railway.toml` files.
+- Confirm the linked project and environment with `railway status --json`, then review `bun run railway:plan`. Use a pinned plan for apply. Preserve existing resources and secrets; never automate destructive confirmation flags or log decrypted variables.
+- Web and API builds use the workspace root and separate Dockerfiles. Keep `.env`, local engine data, and build artifacts out of image contexts. The public web proxy reaches the API privately; only the web and Rivet gateway have public domains.
+- Validate hosted changes with `bun run test:deployment <web-origin>`. It writes its own acceptance counter and uses no paid AI. Test persistence against the same actor before/after a restart; process health alone is insufficient.
+
 ## Adapter and tooling boundaries
 
 - `@rivetkit/svelte` is a workspace package; do not describe it as an official or published Rivet SDK. Preserve its Apache-2.0 license and upstream attribution; the starter itself is MIT.

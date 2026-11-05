@@ -15,6 +15,7 @@
       "cache": false
     },
     "build": {
+      "env": ["WEB_ORIGIN"],
       "dependsOn": ["^build"],
       "outputs": ["build/**", "dist/**", ".svelte-kit/**"]
     }
