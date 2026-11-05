@@ -2,7 +2,6 @@ import {
   bucket,
   defineRailway,
   github,
-  image,
   project,
   ref,
   service,
@@ -16,9 +15,8 @@ export default defineRailway(() => {
   const objects = bucket("adaptable-stashbox", { region: "sjc" });
   const log = volume("rivet-log", { region: "us-west2", sizeMB: 5120 });
   const rivet = service("rivet", {
-    source: image(
-      "rivetdev/engine:3.0.1@sha256:7175496f853fd2ab7a733f5dc59e51556d1b192e4d5059a394fb0547def39a89",
-    ),
+    source: github(repository, { branch: "main", checkSuites: true }),
+    build: { builder: "DOCKERFILE", dockerfilePath: "deploy/rivet.Dockerfile" },
     replicas: 1,
     healthcheck: "/health",
     healthcheckTimeout: 180,
@@ -50,6 +48,7 @@ export default defineRailway(() => {
         "SECRET_ACCESS_KEY",
       ),
       RIVET__OBJECT_STORAGE__PRIMARY__S3__PREFIX: "rivet",
+      AWS_VIRTUAL_HOSTED_STYLE_REQUEST: "true",
       RIVET__TELEMETRY__ENABLED: "false",
     },
   });
