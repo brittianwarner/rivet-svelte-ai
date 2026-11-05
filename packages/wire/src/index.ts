@@ -54,7 +54,7 @@ export const COUNTER_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const MISSING_KEY_MESSAGE =
   "Set OPENROUTER_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY on the API, then send again.";
 
-export const DEFAULT_OPENROUTER_MODEL = "google/gemini-3.8-flash";
+export const DEFAULT_OPENROUTER_MODEL = "z-ai/glm-5.3-flash";
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 
 /** Public demo session membership; this is persistence, not user authentication. */
