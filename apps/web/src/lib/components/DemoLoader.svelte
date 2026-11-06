@@ -49,22 +49,39 @@
 {#if config && Connected}
   {#key config}<Connected {config} />{/key}
 {:else}
-  <div class="connection-placeholder" aria-live="polite">
-    <span class="eyebrow">ACTOR PLAYGROUND</span>
-    <h3>
-      {loading
-        ? "Connecting to your actors…"
-        : "Your playground is almost ready."}
-    </h3>
-    <p>
-      {error ??
-        "Connecting to Rivet. This counter demo needs no account or AI key."}
-    </p>
-    {#if !loading}<button onclick={() => void connect()}
-        >Try connection again <span aria-hidden="true">↗</span></button
-      >{/if}
-    <noscript
-      >Enable JavaScript to connect to the interactive examples.</noscript
-    >
+  <div class="connection-placeholder">
+    <div class="loading-headline">
+      <h1>
+        Change <span class="loading-block">one</span>.<br /><span
+          class="loading-second-line">One at a time.</span
+        >
+      </h1>
+      <p>Each actor owns its state. Svelte brings it into view.</p>
+    </div>
+    <aside class="loading-client" aria-label="Playground connection">
+      <span class="eyebrow">SVELTE VIEW / CONNECTION</span>
+      <div class="loading-value" aria-hidden="true">—</div>
+      <div class="loading-status" role="status">
+        <h2>
+          {loading ? "Connecting to your actors…" : "Let’s get connected."}
+        </h2>
+        <p>
+          {error ??
+            "Waiting for the playground connection. Your actor values will appear here."}
+        </p>
+      </div>
+      {#if !loading}
+        <button onclick={() => void connect()}
+          >Try connection again <span aria-hidden="true">↗</span></button
+        >
+      {/if}
+      <a class="inline-link" href="#start"
+        >Start locally <span aria-hidden="true">↓</span></a
+      >
+      <noscript
+        >Enable JavaScript to use the interactive playground. The setup guide
+        below is ready to read.</noscript
+      >
+    </aside>
   </div>
 {/if}

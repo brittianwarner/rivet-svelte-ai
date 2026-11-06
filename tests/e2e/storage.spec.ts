@@ -20,9 +20,8 @@ for (const failure of ["denied", "quota"] as const) {
       }
     }, failure);
     await page.goto("/");
-    const counter = page.getByRole("region", { name: "Svelte client" });
     await expect(
-      counter.getByRole("button", { name: "+ Increment", exact: true }),
+      page.getByRole("button", { name: "+ Increment", exact: true }),
     ).toBeEnabled();
     await expect(
       page.getByLabel("Connected actors", { exact: true }),

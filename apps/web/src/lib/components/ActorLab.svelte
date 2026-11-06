@@ -1,56 +1,120 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { SESSION_ACTOR_LIMIT } from "@example/wire";
   import { actorExamples } from "#lib/visuals/actor-examples.js";
-  import type { SessionViewModel } from "#lib/view-models/session-view-model.svelte.js";
   import type {
-    ActorNode,
-    SceneLabel,
-    createActorScene,
-  } from "#lib/visuals/actor-scene.js";
+    SessionCounter,
+    SessionViewModel,
+  } from "#lib/view-models/session-view-model.svelte.js";
+  import type { CounterViewModel } from "#lib/view-models/counter-view-model.svelte.js";
+  import ActorBlock from "./ActorBlock.svelte";
 
   let { session }: { session: SessionViewModel } = $props();
-  let canvas: HTMLCanvasElement;
-  let reconnectButton = $state.raw<HTMLButtonElement | undefined>(undefined);
-  let scene = $state.raw<ReturnType<typeof createActorScene> | null>(null);
-  let markers = $state.raw<SceneLabel[]>([]);
-  let visualState = $state<"loading" | "ready" | "fallback">("loading");
-  let paused = $state(false);
-  let sending = $state(false);
+  const id = $props.id();
+  type Receipt = {
+    text: string;
+    error?: string;
+    model: CounterViewModel;
+    connection: CounterViewModel["actor"];
+  };
+  type Request = {
+    key: string;
+    model: CounterViewModel;
+    connection: CounterViewModel["actor"];
+    viaHttp: boolean;
+  };
+  let flat = $state(false);
+  let slots = $state<(string | null)[]>(
+    Array.from({ length: SESSION_ACTOR_LIMIT }, () => null),
+  );
+  let receipts = $state.raw<Record<string, Receipt>>({});
+  let request = $state.raw<Request | null>(null);
+  let removed = $state<{ key: string; label: string; slot: number } | null>(
+    null,
+  );
   let removalStatus = $state("");
-  let removed = $state<{ key: string; label: string } | null>(null);
-  let canvasAddButton = $state.raw<HTMLButtonElement | undefined>(undefined);
-  let canvasRemoveButton = $state.raw<HTMLButtonElement | undefined>(undefined);
   let keyDraft = $derived(session.selectedKey);
-  let activity = $state(
-    "Select an actor, then send an action to watch its state update.",
-  );
+  let settingsOpen = $state(false);
   let codeTab = $state<"state" | "svelte" | "view-model" | "session">("state");
+  let inspectorHeading = $state.raw<HTMLHeadingElement | undefined>(undefined);
+  let addButton = $state.raw<HTMLButtonElement | undefined>(undefined);
+  let undoButton = $state.raw<HTMLButtonElement | undefined>(undefined);
+  let connectionButton = $state.raw<HTMLButtonElement | undefined>(undefined);
   let alive = true;
-  const nodes: ActorNode[] = $derived(
-    session.actors.map((entry) => ({
-      id: `counter/${entry.key}`,
-      label: entry.label,
-      kind: "counter",
-      connected: entry.model.connected,
-      value: entry.model.count,
-    })),
-  );
-  const selectedId = $derived(
-    session.selectedKey ? `counter/${session.selectedKey}` : "",
-  );
-  const selected = $derived(
-    nodes.find((node) => node.id === selectedId) ?? nodes[0],
-  );
+  let focusedActorKey = "";
+
   const entry = $derived(
     session.actors.find((item) => item.key === session.selectedKey) ??
       session.actors[0],
   );
   const model = $derived(entry?.model ?? null);
-  const connected = $derived(session.connectedActors);
-  function actorNumber(label: string): string {
-    return label.replace(/^counter-/, "");
-  }
+  const slotEntries = $derived(
+    slots.map((key) => session.actors.find((item) => item.key === key)),
+  );
+  const heroActor = $derived(slotEntries[0]);
+  const lastSlot = $derived(
+    Math.max(0, ...slots.map((key, index) => (key ? index : 0))),
+  );
+  const headlineAdd = $derived(!heroActor && !session.loading);
+  const atCapacity = $derived(session.actors.length >= SESSION_ACTOR_LIMIT);
+  const undoBlocked = $derived(
+    !!removed &&
+      atCapacity &&
+      !session.actors.some((item) => item.key === removed?.key),
+  );
+  const membershipBlocked = $derived(!session.canMutate || request !== null);
+  const actionBlocked = $derived(
+    session.loading || session.pending || request !== null,
+  );
+  const atLimit = $derived(
+    !!model?.hasValue && model.count >= Number.MAX_SAFE_INTEGER,
+  );
+  const selectedReceipt = $derived(
+    entry &&
+      receipts[entry.key]?.model === model &&
+      receipts[entry.key]?.connection === model?.actor
+      ? receipts[entry.key]
+      : undefined,
+  );
+  const sessionError = $derived(session.error ?? session.connectionError);
+  const valueStatus = $derived(
+    !model
+      ? session.loading
+        ? "Restoring your session…"
+        : "Add an actor to begin."
+      : model.snapshotError
+        ? model.hasValue
+          ? "Last known value · saved count could not be refreshed."
+          : "Saved count unavailable."
+        : model.snapshotPending
+          ? model.hasValue
+            ? "Refreshing saved count · showing last known value."
+            : "Loading saved count…"
+          : !model.hasValue
+            ? "Waiting for the saved count…"
+            : atLimit
+              ? "Maximum safe count reached."
+              : model.connected
+                ? "Rivet owns this count. Svelte displays it."
+                : "Known value · socket offline. HTTP remains available.",
+  );
+  const activity = $derived(
+    selectedReceipt?.text ??
+      (model?.snapshotError
+        ? "Retry loading the saved count."
+        : model?.snapshotPending
+          ? "Reading saved count…"
+          : model?.hasValue
+            ? "Select inspects. Add 1 changes only that actor."
+            : session.loading
+              ? "Restoring your saved actors…"
+              : entry
+                ? "Waiting for the first saved count."
+                : "No saved actors. Add one to give state a home."),
+  );
+  const actionError = $derived(
+    selectedReceipt ? selectedReceipt.error : model?.error,
+  );
   const examples = $derived(actorExamples("counter", entry?.key ?? "your-key"));
   const code = $derived(
     codeTab === "session"
@@ -66,477 +130,594 @@
           2,
         )
       : codeTab === "state"
-        ? model
-          ? `{\n  "count": ${model.count}\n}`
-          : session.loading
-            ? "// Restoring your session…"
-            : "// Add an actor to inspect its state."
+        ? model?.hasValue
+          ? JSON.stringify({ count: model.count }, null, 2)
+          : entry
+            ? "// Waiting for the saved count. Zero is not assumed."
+            : session.loading
+              ? "// Restoring your session…"
+              : "// Add an actor to inspect its state."
         : codeTab === "svelte"
           ? examples.component
           : examples.viewModel,
   );
-  const sessionError = $derived(session.error ?? session.connectionError);
 
+  // Slot assignment is bounded presentation metadata. Server membership remains authoritative.
+  // Reconcile external session snapshots without moving surviving keyed objects.
   $effect(() => {
-    scene?.update(nodes, selectedId);
+    const keys = session.actors.map((item) => item.key);
+    untrack(() => {
+      const next = slots.map((key) => (key && keys.includes(key) ? key : null));
+      for (const key of keys) {
+        if (next.includes(key)) continue;
+        const preferred = removed?.key === key ? removed.slot : -1;
+        const free =
+          preferred >= 0 && next[preferred] === null
+            ? preferred
+            : next.indexOf(null);
+        if (free >= 0) next[free] = key;
+      }
+      if (next.some((key, index) => key !== slots[index])) slots = next;
+      if (Object.keys(receipts).some((key) => !keys.includes(key))) {
+        receipts = Object.fromEntries(
+          Object.entries(receipts).filter(([key]) => keys.includes(key)),
+        );
+      }
+      if (removed && keys.includes(removed.key)) {
+        removalStatus = `${removed.label} is back in the session.`;
+        removed = null;
+      }
+      if (focusedActorKey && !keys.includes(focusedActorKey)) {
+        focusedActorKey = "";
+        void focusInspector();
+      }
+    });
   });
-  $effect(() => {
-    scene?.setPaused(paused);
-  });
-  onMount(() => {
-    let cancelled = false;
-    let instance: ReturnType<typeof createActorScene> | null = null;
-    void import("#lib/visuals/actor-scene.js")
-      .then(({ createActorScene }) => {
-        if (cancelled) return;
-        try {
-          instance = createActorScene(canvas, selectActor, (next) => {
-            markers = next;
-          });
-          scene = instance;
-          visualState = "ready";
-        } catch {
-          visualState = "fallback";
-        }
-      })
-      .catch(() => {
-        if (!cancelled) visualState = "fallback";
-      });
-    return () => {
-      cancelled = true;
-      instance?.dispose();
-    };
-  });
+
   onDestroy(() => {
     alive = false;
   });
-  function selectActor(id: string): void {
-    const key = id.startsWith("counter/") ? id.slice(8) : id;
+
+  function rememberFocus(event: FocusEvent): void {
+    focusedActorKey =
+      event.target instanceof HTMLElement
+        ? (event.target.closest<HTMLElement>("[data-actor-key]")?.dataset
+            .actorKey ?? "")
+        : "";
+  }
+  async function focusInspector(key?: string): Promise<void> {
+    await tick();
+    if (!alive || (key && session.selectedKey !== key)) return;
+    inspectorHeading?.focus({ preventScroll: true });
+    inspectorHeading?.scrollIntoView({ block: "nearest", behavior: "instant" });
+  }
+  function selectActor(key: string): void {
     session.select(key);
-    keyDraft = key;
+    void focusInspector(key);
+  }
+  function receipt(target: SessionCounter, text: string, error?: string): void {
+    if (
+      !alive ||
+      !session.actors.some(
+        (item) => item.key === target.key && item.model === target.model,
+      )
+    )
+      return;
+    receipts = {
+      ...receipts,
+      [target.key]: {
+        text,
+        error,
+        model: target.model,
+        connection: target.model.actor,
+      },
+    };
   }
   async function addActor(): Promise<void> {
-    activity = "Creating your counter…";
+    if (membershipBlocked || atCapacity) return;
     await session.createCounter();
-    if (alive)
-      activity =
-        session.error ??
-        "Actor added. Reload the page to find your counters here again.";
+    if (alive) await focusInspector();
   }
   async function removeActor(): Promise<void> {
-    if (!entry || !session.canMutate || sending) return;
-    const target = { key: entry.key, label: entry.label };
-
+    if (!entry || membershipBlocked) return;
+    const target = {
+      key: entry.key,
+      label: entry.label,
+      slot: slots.indexOf(entry.key),
+    };
     await session.removeCounter(target.key);
     if (!alive) return;
     if (session.error) {
-      activity = session.error;
+      await focusInspector();
       return;
     }
-    removed = target;
-    removalStatus = `${target.label} removed. Undo is available in the canvas controls.`;
-    activity =
-      "Select an actor, then send an action to watch its state update.";
+    if (!session.actors.some((item) => item.key === target.key)) {
+      removed = target;
+      removalStatus = `${target.label} removed from this session. Its state is retained.`;
+    }
     await tick();
-    canvasAddButton?.focus({ preventScroll: true });
+    const focus = undoButton ?? addButton ?? inspectorHeading;
+    focus?.focus({ preventScroll: true });
+    focus?.scrollIntoView({ block: "nearest", behavior: "instant" });
   }
   async function undoRemove(): Promise<void> {
-    if (!removed || !session.canMutate) return;
+    if (!removed || membershipBlocked || undoBlocked) return;
     const target = removed;
     await session.attachCounter(target.key, target.label);
     if (!alive) return;
-    if (session.error) {
-      activity = session.error;
-      return;
+    if (!session.error) {
+      removed = null;
+      removalStatus = `${target.label} restored with its existing state.`;
     }
-    removed = null;
-    removalStatus = `${target.label} restored.`;
-    await tick();
-    (canvasAddButton?.disabled ? canvasRemoveButton : canvasAddButton)?.focus({
-      preventScroll: true,
-    });
+    await focusInspector();
   }
   async function disconnect(): Promise<void> {
-    if (!entry) return;
-    session.disconnect(entry.key);
-    activity = `${entry.label} disconnected locally. Your session still remembers it.`;
+    if (!entry || request || session.pending) return;
+    const target = entry;
+    session.disconnect(target.key);
+    receipt(target, `Socket disconnected · ${target.label}. State retained.`);
     await tick();
-    reconnectButton?.focus();
+    connectionButton?.focus({ preventScroll: true });
+    connectionButton?.scrollIntoView({ block: "nearest", behavior: "instant" });
   }
-  function reconnect(): void {
-    if (entry) {
-      session.reconnect(entry.key);
-      activity = `Reconnecting ${entry.label} to its existing state…`;
-    }
+  async function reconnect(): Promise<void> {
+    if (!entry || request || session.pending) return;
+    const target = entry;
+    session.reconnect(target.key);
+    receipts = Object.fromEntries(
+      Object.entries(receipts).filter(([key]) => key !== target.key),
+    );
+    await focusInspector(target.key);
   }
-  async function send(viaHttp = false): Promise<void> {
-    if (!model || sending || !model.connected || !selected) return;
-    const target = model,
-      connection = target.actor,
-      actorKey = target.name,
-      name = selected.label;
-    sending = true;
-    activity = `${name}.increment(1) → ${viaHttp ? "HTTP" : "WebSocket"}`;
-    scene?.action(selected.id);
+  async function refreshCount(): Promise<void> {
+    if (
+      !entry ||
+      request ||
+      !entry.model.connected ||
+      entry.model.snapshotPending
+    )
+      return;
+    const target = entry;
+    const connection = target.model.actor;
+    await target.model.refreshCount();
+    if (
+      !alive ||
+      target.model.name !== target.key ||
+      target.model.actor !== connection
+    )
+      return;
+    if (!target.model.snapshotError && target.model.hasValue)
+      receipt(target, `Snapshot refreshed · ${target.label}.`);
+  }
+  async function send(target: SessionCounter, viaHttp = false): Promise<void> {
+    const owner = target.model;
+    if (
+      actionBlocked ||
+      owner.name !== target.key ||
+      (!viaHttp &&
+        (!owner.connected || !owner.hasValue || owner.snapshotPending)) ||
+      (owner.hasValue && owner.count >= Number.MAX_SAFE_INTEGER)
+    )
+      return;
+    const captured: Request = {
+      key: target.key,
+      model: owner,
+      connection: owner.actor,
+      viaHttp,
+    };
+    request = captured;
+    session.select(target.key);
+    receipt(
+      target,
+      `Waiting for ${viaHttp ? "HTTP" : "action"} response · ${target.label}.`,
+    );
+    void focusInspector(target.key);
     try {
-      if (viaHttp) await target.incrementViaHttp();
-      else await target.increment();
+      if (viaHttp) await owner.incrementViaHttp();
+      else await owner.increment();
       if (!alive) return;
-      if (target.actor !== connection || target.name !== actorKey) {
-        activity = `${name}: connection changed before the response. Reconnect to check its state.`;
+      const sameMember = session.actors.some(
+        (item) => item.key === captured.key && item.model === owner,
+      );
+      if (!sameMember || owner.name !== captured.key) return;
+      if (owner.actor !== captured.connection) {
+        receipt(
+          target,
+          `Connection changed · ${target.label}. Check its current count before another action.`,
+        );
         return;
       }
-      activity =
-        target.error ??
-        `${name} → count: ${target.count} → newCount event → Svelte updated.`;
-    } catch {
-      if (alive)
-        activity =
-          "The action could not be completed. Check the connection and try again.";
+      if (owner.error)
+        receipt(
+          target,
+          `Request needs attention · ${target.label}.`,
+          owner.error,
+        );
+      else
+        receipt(
+          target,
+          `${viaHttp ? "HTTP response" : "Action response"} received · ${target.label}.${viaHttp && !owner.connected ? " Socket offline." : ""}`,
+        );
+    } catch (error) {
+      if (owner.name === captured.key && owner.actor === captured.connection) {
+        receipt(
+          target,
+          `Request needs attention · ${target.label}.`,
+          error instanceof Error
+            ? error.message
+            : "The request could not be completed.",
+        );
+      }
     } finally {
-      if (alive) sending = false;
+      if (alive && request === captured) request = null;
     }
   }
   async function connectKey(event: SubmitEvent): Promise<void> {
     event.preventDefault();
-    await session.attachCounter(keyDraft);
-    if (alive)
-      activity =
-        session.error ?? "Counter connected and saved to your session.";
+    if (membershipBlocked) return;
+    const key = keyDraft.trim().toLowerCase();
+    await session.attachCounter(key);
+    if (!alive) return;
+    const target = session.actors.find((item) => item.key === key);
+    if (!session.error && target) {
+      receipts = Object.fromEntries(
+        Object.entries(receipts).filter(([stored]) => stored !== key),
+      );
+    }
+    await focusInspector();
   }
 </script>
 
-<section class="actor-playground" aria-label="Live actor anatomy">
-  <div class="playground-toolbar">
-    <div class="toolbar-heading">
-      <span class="kicker">LIVE PLAYGROUND</span>
-      <h3>See your actors in action.</h3>
-    </div>
-    <div class="toolbar-actions">
-      <div class="connected-count" aria-live="polite" aria-atomic="true">
-        <span class:online={connected > 0} class="connection-light"
-        ></span><strong aria-label="Connected actors">{connected}</strong><span
-          >{connected === 1 ? "counter connected" : "counters connected"}</span
-        >
-      </div>
-    </div>
-  </div>
+<svelte:document onfocusin={rememberFocus} />
 
+{#snippet addControl(inHeadline = false)}
+  <button
+    type="button"
+    class={["canvas-add", { "headline-add": inHeadline }]}
+    aria-label="Add actor"
+    title={atCapacity
+      ? "Seven actors saved. Remove one to make room."
+      : "Create an independent counter"}
+    bind:this={addButton}
+    disabled={membershipBlocked || atCapacity}
+    onclick={addActor}
+  >
+    {#if inHeadline}<span>one</span><span class="add-caption">+ ADD ACTOR</span>
+    {:else}<span>{session.pending ? "Saving…" : "+ Add actor"}</span>{/if}
+  </button>
+{/snippet}
+
+{#snippet undoControl()}
+  <button
+    type="button"
+    class="undo-remove"
+    aria-label="Undo remove"
+    title={removed ? `Restore ${removed.label}` : undefined}
+    bind:this={undoButton}
+    disabled={membershipBlocked || undoBlocked}
+    onclick={undoRemove}>Undo remove</button
+  >
+{/snippet}
+
+<section class="actor-playground" aria-label="Live actor anatomy" class:flat>
   <div class="session-status" data-session-id={session.id}>
-    <span class:online={session.connected} class="connection-light"></span>
-    <span
-      >{session.loading
+    <span class="session-identity"
+      ><i class:online={session.connected} aria-hidden="true"
+      ></i>{session.loading
         ? "Restoring session…"
         : session.pending
-          ? "Saving your actors…"
+          ? "Saving membership…"
           : session.connected
             ? "Session connected"
             : "Session reconnecting…"}</span
     >
-    <code title={session.id}
-      >session / {session.id ? session.id.slice(0, 8) : "connecting"}</code
+    <span class="session-counts"
+      ><strong aria-label="Session actors">{session.actors.length}</strong>
+      saved <span aria-hidden="true">/</span>
+      <strong aria-label="Connected actors">{session.connectedActors}</strong> connected</span
     >
-    <span class="session-members"
-      ><strong aria-label="Session actors">{session.actors.length}</strong> / {SESSION_ACTOR_LIMIT}
-      saved counters</span
+    <button
+      type="button"
+      class="flat-toggle"
+      aria-pressed={flat}
+      onclick={() => {
+        flat = !flat;
+      }}>Flat view</button
     >
-    {#if session.temporary}<span class="temporary-session"
-        >Temporary identity · browser storage unavailable</span
-      >{/if}
   </div>
-  {#if sessionError}<div class="session-error">
+  {#if sessionError}
+    <div class="session-error">
       <p role="alert">{sessionError}</p>
       <button
-        class="http-action"
-        disabled={session.pending}
+        type="button"
+        disabled={session.pending || request !== null}
         onclick={() => void session.retry()}>Retry session</button
       >
-    </div>{/if}
-  <div class="runtime-grid">
-    <div class="actor-field">
-      <div class="field-heading">
-        <span>RIVET ACTORS</span><span>SELECT AN ACTOR</span>
-      </div>
-      <div class="scene-viewport" data-render-state={visualState}>
-        <canvas
-          bind:this={canvas}
-          aria-label="Interactive 3D actor field. Numbered nodes correspond to actors in the list below."
-        ></canvas>
-        {#if visualState === "ready"}
-          <div class="scene-markers" aria-label="Labeled system diagram">
-            {#each markers.filter((marker) => marker.kind === "counter") as marker (marker.id)}
-              <button
-                class="actor-marker"
-                class:marker-selected={selectedId === marker.id}
-                aria-label={`Inspect actor ${marker.label}`}
-                aria-pressed={selectedId === marker.id}
-                style:left={`${marker.x}px`}
-                style:top={`${marker.y}px`}
-                onclick={() => {
-                  selectActor(marker.id);
-                }}
-                ><span class="marker-number">{actorNumber(marker.label)}</span
-                ></button
-              >
-            {/each}
-          </div>
-        {:else}
-          <div class="scene-message">
-            <span class="fallback-symbol" aria-hidden="true">◈</span><strong
-              >{visualState === "loading"
-                ? "Loading the 3D view…"
-                : "3D view unavailable."}</strong
-            >
-            <p>
-              {visualState === "loading"
-                ? "Your actors will appear here."
-                : "3D is unavailable in this browser. Select an actor below and use the live client."}
-            </p>
-          </div>
-        {/if}
-      </div>
-      <div class="canvas-actions" aria-label="Canvas actor controls">
-        <div class="canvas-primary">
-          <button
-            class="canvas-add"
-            aria-label="Add actor"
-            title={session.actors.length >= SESSION_ACTOR_LIMIT
-              ? "Seven actors saved. Remove one to make room."
-              : "Create a counter in this session"}
-            bind:this={canvasAddButton}
-            disabled={!session.canMutate ||
-              session.actors.length >= SESSION_ACTOR_LIMIT}
-            onclick={addActor}
-          >
-            <svg
-              aria-hidden="true"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg
-            >
-            Add actor
-          </button>
-          {#if removed}
-            <button
-              class="undo-remove"
-              aria-label="Undo remove"
-              title={`Restore ${removed.label}`}
-              disabled={!session.canMutate ||
-                session.actors.length >= SESSION_ACTOR_LIMIT}
-              onclick={undoRemove}>Undo</button
-            >
-          {/if}
-        </div>
-        {#if entry}
-          <div class="canvas-selection">
-            <span title={`Selected actor: ${entry.label}`}>{entry.label}</span>
-            <button
-              class="canvas-remove"
-              aria-label={`Remove ${entry.label} from playground`}
-              bind:this={canvasRemoveButton}
-              title={`Remove ${entry.label} from playground`}
-              disabled={!session.canMutate || sending}
-              onclick={removeActor}
-            >
-              <svg
-                aria-hidden="true"
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path
-                  d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"
-                /></svg
-              >
-            </button>
-          </div>
-        {/if}
-      </div>
-      <span class="sr-only" role="status">{removalStatus}</span>
-      <div class="field-controls">
-        <div class="message-legend">
-          <span><i></i> Action</span><span
-            ><i class="event-color"></i> Event</span
-          ><span class="gateway-legend"
-            ><span aria-hidden="true">◆</span> Rivet gateway</span
-          >
-        </div>
-        <div class="camera-controls" aria-label="3D view controls">
-          <button
-            onclick={() => scene?.rotate()}
-            disabled={visualState !== "ready"}
-            aria-label="Rotate view">↻</button
-          ><button
-            onclick={() => scene?.reset()}
-            disabled={visualState !== "ready"}>Reset</button
-          ><button
-            aria-pressed={paused}
-            onclick={() => {
-              paused = !paused;
-            }}>{paused ? "Play motion" : "Pause motion"}</button
-          >
-        </div>
-      </div>
     </div>
+  {/if}
+  {#if session.temporary}<p class="temporary-session">
+      Temporary session · browser storage is unavailable.
+    </p>{/if}
 
-    <section class="svelte-client" aria-label="Svelte client">
+  <div class="runtime-grid">
+    <h1
+      class="headline"
+      aria-label={headlineAdd
+        ? session.actors.length
+          ? "Add an actor. Or change a neighbor."
+          : "Add an actor. Give state a home."
+        : "Change one actor at a time."}
+    >
+      <span class="headline-line">
+        <span>{headlineAdd ? "Add" : "Change"}</span>
+        {#if heroActor}
+          {#key heroActor.key}
+            <ActorBlock
+              actorKey={heroActor.key}
+              label={heroActor.label}
+              value={heroActor.model.count}
+              hasValue={heroActor.model.hasValue}
+              connected={heroActor.model.connected}
+              selected={session.selectedKey === heroActor.key}
+              pending={request?.key === heroActor.key}
+              disabled={actionBlocked || heroActor.model.snapshotPending}
+              {flat}
+              onincrement={() => void send(heroActor)}
+              onselect={() => selectActor(heroActor.key)}
+            />
+          {/key}
+        {:else if headlineAdd}
+          <span class="vacant-slot">{@render addControl(true)}</span>
+        {:else}<span class="waiting-slot" aria-label="Restoring actors">—</span
+          >{/if}
+        <span class="headline-period">.</span>
+      </span>
+      <span class="headline-subline"
+        >{headlineAdd
+          ? session.actors.length
+            ? "Or change a neighbor."
+            : "Give state a home."
+          : "One at a time."}</span
+      >
+    </h1>
+
+    <section
+      class="svelte-client"
+      aria-label="Svelte client"
+      data-actor-key={entry?.key}
+    >
       <div class="client-chrome">
-        <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span
-        ><span>SVELTE CLIENT</span><span
-          class="client-live"
-          class:is-connected={model?.connected}
-          >{!model
-            ? session.loading
-              ? "RESTORING"
-              : "READY"
-            : !model.actor
-              ? "DISCONNECTED"
-              : model.connected
-                ? "LIVE"
-                : "CONNECTING"}</span
+        <span>SVELTE VIEW / SELECTED ACTOR</span><span
+          >{model?.connected
+            ? "CONNECTED"
+            : model?.actor
+              ? "CONNECTING"
+              : "OFFLINE"}</span
         >
       </div>
-      {#if selected && model && entry}<div class="client-content">
-          <div class="client-actor">
-            <span class="actor-index">{actorNumber(entry.label)}</span>
-            <div>
-              <span class="client-label">CONNECTED TO</span>
-              <h4 title={selected.label}>{selected.label}</h4>
-            </div>
-            <span class:online={model.connected} class="connection-light"
-            ></span>
-          </div>
+      <div class="client-content">
+        <div class="client-actor">
+          <span class="selection-mark" aria-hidden="true"></span>
+          <h2 bind:this={inspectorHeading} tabindex="-1">
+            {entry?.label ??
+              (session.loading ? "Restoring actors…" : "Empty session")}
+          </h2>
+        </div>
+        {#if entry && model}
+          <code class="selected-key" title={entry.key}>{entry.key}</code>
           <div class="client-state">
-            <span class="client-label">COUNT</span><output
+            <output
               aria-label="Counter value"
-              aria-live="polite">{model.count.toLocaleString()}</output
+              aria-live="polite"
+              aria-describedby={`${id}-value-status`}
+              class:long-value={model.hasValue &&
+                String(model.count).length > 10}
+              >{model.hasValue ? String(model.count) : "—"}</output
             >
-            <p>Rivet stores this count. Svelte updates when it changes.</p>
+            <p id={`${id}-value-status`}>{valueStatus}</p>
+          </div>
+          <div class="selected-actions">
+            <button
+              type="button"
+              class="increment-action"
+              disabled={actionBlocked ||
+                !model.connected ||
+                !model.hasValue ||
+                model.snapshotPending ||
+                atLimit}
+              onclick={() => void send(entry)}>+ Increment</button
+            >
+            <button
+              type="button"
+              class="http-action"
+              disabled={actionBlocked || model.httpPending || atLimit}
+              onclick={() => void send(entry, true)}>+ Via HTTP</button
+            >
           </div>
           <div class="client-buttons">
             <button
-              class="increment-action"
-              disabled={!model.connected ||
-                sending ||
-                session.pending ||
-                session.loading}
-              onclick={() => void send()}>+ Increment</button
-            ><button
-              class="http-action"
-              disabled={!model.connected ||
-                sending ||
-                model.httpPending ||
-                session.pending ||
-                session.loading}
-              onclick={() => void send(true)}>+ Via HTTP</button
+              type="button"
+              class="canvas-remove"
+              aria-label={`Remove ${entry.label} from playground`}
+              disabled={membershipBlocked}
+              onclick={removeActor}>Remove</button
+            >
+            {#if removed}{@render undoControl()}{/if}
+            {#if !headlineAdd}{@render addControl()}{/if}
+          </div>
+          <div class="connection-actions">
+            {#if !model.actor}
+              <button
+                type="button"
+                class="reconnect-action"
+                bind:this={connectionButton}
+                disabled={request !== null || session.pending}
+                onclick={reconnect}>Reconnect actor</button
+              >
+            {:else}
+              <button
+                type="button"
+                class="disconnect-action"
+                bind:this={connectionButton}
+                disabled={request !== null || session.pending}
+                onclick={disconnect}>Disconnect actor</button
+              >
+            {/if}
+            <span
+              >{model.connected
+                ? "Direct actor socket"
+                : "State stays in Rivet"}</span
             >
           </div>
-          {#if model.error}<p class="client-error" role="alert">
-              {model.error}
-            </p>{/if}
+          {#if model.snapshotError}
+            <div class="count-recovery">
+              <p class="client-error" role="alert">{model.snapshotError}</p>
+              <button
+                type="button"
+                disabled={model.snapshotPending ||
+                  !model.connected ||
+                  request !== null}
+                onclick={refreshCount}>Retry count</button
+              >
+            </div>
+          {/if}
+          {#if actionError}
+            <div class="count-recovery">
+              <p class="client-error" role="alert">
+                {actionError} The request may have reached the actor. Check its current
+                count before sending another increment.
+              </p>
+              {#if model.connected && !model.snapshotError}
+                <button
+                  type="button"
+                  disabled={model.snapshotPending || request !== null}
+                  onclick={refreshCount}>Check current count</button
+                >
+              {/if}
+            </div>
+          {/if}
+        {:else}
+          <p class="empty-copy">
+            {session.loading
+              ? "Your session remembers its counters in Rivet. Waiting for the saved registry."
+              : "Your session is intentionally empty. Add an actor when you are ready."}
+          </p>
+          {#if !headlineAdd}{@render addControl()}{/if}
+        {/if}
+        <div class="activity-line" role="status" aria-live="polite">
+          <span aria-hidden="true">↳</span><span>{activity}</span>
+        </div>
+        {#if removed}
+          <div class="removal-recovery">
+            {#if !entry}{@render undoControl()}{/if}
+            {#if undoBlocked}<p>
+                Seven other actors are saved. Remove one to make room for this
+                actor.
+              </p>{/if}
+          </div>
+        {/if}
+        <span class="sr-only" role="status">{removalStatus}</span>
+        <details class="connection-settings" bind:open={settingsOpen}>
+          <summary
+            >Connect an actor key <span aria-hidden="true">＋</span></summary
+          >
           <form class="key-form" onsubmit={connectKey}>
-            <label for="playground-actor-key">Actor key</label>
-            <div>
+            <label for={`${id}-actor-key`}>Actor key</label>
+            <div class="key-input-row">
               <input
-                id="playground-actor-key"
+                id={`${id}-actor-key`}
                 bind:value={keyDraft}
                 required
                 maxlength="64"
                 pattern={"[a-zA-Z0-9][a-zA-Z0-9\\-]{0,63}"}
                 spellcheck="false"
-                aria-describedby="playground-key-help"
+                aria-describedby={`${id}-key-help`}
                 title="Use 1–64 letters, numbers, or hyphens. Start with a letter or number. Keys become lowercase."
-                disabled={session.pending || session.loading}
-              /><button type="submit" disabled={!session.canMutate}
+                disabled={membershipBlocked}
+              /><button type="submit" disabled={membershipBlocked}
                 >Connect</button
               >
             </div>
-            <p id="playground-key-help">
-              Use 1–64 letters, numbers, or hyphens. Start with a letter or
-              number. Connecting a key keeps existing session actors.
+            <p id={`${id}-key-help`}>
+              Same key, same state. Use 1–64 letters, numbers or hyphens. An
+              existing session member can be connected even when all seven
+              places are filled.
             </p>
           </form>
-          <div class="client-footer">
-            {#if model.actor}<button
-                class="disconnect-action"
-                onclick={disconnect}
-                >Disconnect actor <span aria-hidden="true">↗</span></button
-              >{:else}<button
-                class="http-action reconnect-action"
-                bind:this={reconnectButton}
-                onclick={reconnect}>Reconnect actor</button
-              >{/if}
-          </div>
-        </div>{:else}<div class="client-loading">
-          <span class="fallback-symbol" aria-hidden="true">◈</span><strong
-            >{sessionError
-              ? "Your session needs attention."
-              : session.loading
-                ? "Restoring your actors…"
-                : "Your canvas is ready."}</strong
-          >
-          <p>
-            {session.loading
-              ? "Your session remembers your counters in Rivet. This browser stores only the session ID."
-              : "Use + Add actor in the canvas to create a counter with its own state."}
-          </p>
-        </div>{/if}
+        </details>
+      </div>
     </section>
+
+    {#if lastSlot > 0}
+      <div class="neighbor-field">
+        <div class="field-heading">
+          <span>INDEPENDENT NEIGHBORS</span><span class="field-scroll-hint"
+            >SCROLL TO EXPLORE ↓</span
+          >
+        </div>
+        <div class="actor-dock" aria-label="Playground actors">
+          {#each slotEntries.slice(1, lastSlot + 1) as actor, index (index)}
+            <div class="actor-slot">
+              {#if actor}
+                {#key actor.key}
+                  <ActorBlock
+                    actorKey={actor.key}
+                    label={actor.label}
+                    value={actor.model.count}
+                    hasValue={actor.model.hasValue}
+                    connected={actor.model.connected}
+                    selected={session.selectedKey === actor.key}
+                    pending={request?.key === actor.key}
+                    disabled={actionBlocked || actor.model.snapshotPending}
+                    {flat}
+                    onincrement={() => void send(actor)}
+                    onselect={() => selectActor(actor.key)}
+                  />
+                {/key}
+              {:else}<span class="available-slot">Available place</span>{/if}
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+    <div class="playground-intro">
+      <p>
+        Disconnect closes this socket. Remove changes session membership.
+        Neither destroys the actor.
+      </p>
+    </div>
   </div>
 
-  <div class="actor-dock" aria-label="Playground actors">
-    {#each nodes as node (node.id)}<button
-        class="actor-chip"
-        class:chip-selected={selectedId === node.id}
-        aria-pressed={selectedId === node.id}
-        onclick={() => {
-          selectActor(node.id);
-        }}
-        ><span class="chip-index">{actorNumber(node.label)}</span><span
-          class="chip-name"
-          title={node.label}>{node.label}</span
-        ><span class:online={node.connected} class="connection-light"
-        ></span></button
-      >{/each}
-    <span class="connection-budget"
-      >{session.actors.length}/{SESSION_ACTOR_LIMIT} saved counters</span
-    >
-  </div>
-  <div class="activity-line" role="status">
-    <span aria-hidden="true">↳</span><span>{activity}</span>
-  </div>
-
-  <div class="code-workspace">
+  <div class="code-workspace" class:compact-code={codeTab === "state"}>
     <div class="code-toolbar">
       <div role="group" aria-label="Code view">
         <button
+          type="button"
           class:tab-active={codeTab === "state"}
           aria-pressed={codeTab === "state"}
           onclick={() => {
             codeTab = "state";
           }}>Live state</button
-        ><button
+        >
+        <button
+          type="button"
           class:tab-active={codeTab === "svelte"}
           aria-label="Svelte connection"
           aria-pressed={codeTab === "svelte"}
           onclick={() => {
             codeTab = "svelte";
           }}>Svelte component</button
-        ><button
+        >
+        <button
+          type="button"
           class:tab-active={codeTab === "view-model"}
           aria-pressed={codeTab === "view-model"}
           onclick={() => {
             codeTab = "view-model";
           }}>View model</button
-        ><button
+        >
+        <button
+          type="button"
           class:tab-active={codeTab === "session"}
           aria-pressed={codeTab === "session"}
           onclick={() => {
@@ -561,936 +742,755 @@
           : codeTab === "svelte"
             ? "Actor connection example"
             : "Actor view model example"}><code>{code}</code></pre>
-  </div>
-  <div class="playground-footnote">
-    <span
-      >Each orb is a counter actor. The gateway routes actions; events update
-      connected clients. Your session remembers up to seven counters in this
-      demo, even after you disconnect.</span
-    ><a
-      href="https://github.com/brittianwarner/rivet-svelte-ai/blob/main/docs/first-actor.md"
-      >Build your first actor ↗</a
-    >
+    <div class="playground-footnote">
+      <span
+        >Rivet routes each action to its actor. Events update connected views;
+        reconnect reads the latest state.</span
+      ><a
+        href="https://github.com/brittianwarner/rivet-svelte-ai/blob/main/docs/first-actor.md"
+        >Build your first actor ↗</a
+      >
+    </div>
   </div>
 </section>
 
 <style>
   .actor-playground {
-    --ink: #f4f3ef;
-    --muted: #a3a9b3;
-    --line: #262c36;
-    --orange: #ff744b;
-    --mint: #82e4ba;
-    background: #0e1118;
-    border: 1px solid #2b303a;
-    border-radius: 14px;
-    overflow: hidden;
     color: var(--ink);
+    background: var(--paper);
+    font-family: Arial, Helvetica, sans-serif;
+    min-width: 0;
   }
   button,
   input {
     font: inherit;
+    border-radius: 0;
   }
   button {
     cursor: pointer;
-    transition:
-      background 0.16s,
-      color 0.16s,
-      border-color 0.16s;
+    touch-action: manipulation;
+    min-height: 44px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink);
+    padding: 10px 13px;
+    font-size: 12px;
+    font-weight: 400;
+  }
+  button:hover {
+    background: #e8ebe4;
   }
   button:disabled {
-    opacity: 0.4;
+    opacity: 0.5;
     cursor: not-allowed;
   }
   button:focus-visible,
   input:focus-visible,
+  summary:focus-visible,
   pre:focus-visible {
-    outline: 2px solid var(--mint);
+    outline: 3px solid var(--red);
     outline-offset: 4px;
   }
-  .playground-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 24px;
-    padding: 26px 28px;
-    border-bottom: 1px solid var(--line);
-  }
-  .kicker {
-    display: block;
-    color: var(--orange);
-    font: 11px var(--mono);
-    letter-spacing: 0.13em;
-    margin-bottom: 9px;
-  }
-  .toolbar-heading h3 {
-    color: var(--ink);
-    font:
-      500 24px/1.2 "Space Grotesk",
-      sans-serif;
-    letter-spacing: -0.04em;
+  h1,
+  h2,
+  p {
     margin: 0;
   }
-  .toolbar-actions {
+  .session-status {
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 16px;
+    border-top: 1px solid var(--ink);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 0;
+    font:
+      11px/1.5 ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
   }
-  .connected-count {
+  .session-identity {
     display: flex;
     align-items: center;
-    gap: 8px;
-    color: var(--muted);
-    font-size: 12px;
+    gap: 9px;
+  }
+  .session-identity i {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border: 1px solid var(--muted);
+    border-radius: 50%;
+  }
+  .session-identity i.online {
+    background: var(--red);
+    border-color: var(--red);
+  }
+  .session-counts {
+    margin-left: auto;
     white-space: nowrap;
   }
-  .connected-count strong {
-    color: var(--ink);
-    font:
-      22px "Space Grotesk",
-      sans-serif;
+  .session-counts strong {
+    font-weight: 600;
   }
-  .connection-light {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #626975;
+  .flat-toggle {
+    min-height: 44px;
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+  .flat-toggle[aria-pressed="true"] {
+    background: var(--ink);
+    color: var(--paper);
+  }
+  .session-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+    color: #9d2819;
+  }
+  .session-error button {
     flex-shrink: 0;
   }
-  .connection-light.online {
-    background: var(--mint);
-    box-shadow: 0 0 0 3px #82e4ba0d;
+  .temporary-session {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 12px;
   }
   .runtime-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.9fr) minmax(300px, 1fr);
-    min-height: 540px;
-    height: auto;
+    grid-template-columns: minmax(0, 1.45fr) minmax(330px, 1fr);
+    column-gap: 48px;
+    align-items: start;
+    padding: 40px 0 28px;
   }
-  .actor-field {
-    min-width: 0;
-    min-height: 0;
+  .headline {
+    grid-column: 1;
+    grid-row: 1;
+    margin: 0;
+    font:
+      600 clamp(56px, 6vw, 82px)/1.05 Arial,
+      Helvetica,
+      sans-serif;
+    letter-spacing: -0.075em;
+  }
+  .headline-line {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    min-height: 170px;
+  }
+  .headline-period {
+    margin-left: -10px;
+  }
+  .headline-subline {
+    display: block;
+    margin-top: 14px;
+    font-size: 0.76em;
+    letter-spacing: -0.065em;
+    line-height: 1.1;
+  }
+  .vacant-slot {
+    display: inline-flex;
+    width: 132px;
+    height: 118px;
+    margin: 12px 10px 44px 0;
+  }
+  .headline-add {
     display: flex;
     flex-direction: column;
-    background: radial-gradient(ellipse at 35% 45%, #17202a, #0d1118 72%);
-  }
-  .field-heading {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    padding: 20px 24px 0;
-    color: #939daa;
-    font: 10px var(--mono);
-    letter-spacing: 0.09em;
-  }
-  .field-heading > span:last-child {
-    color: #687582;
-    font-size: 9px;
-  }
-  .scene-viewport {
-    position: relative;
-    flex: 1;
-    min-height: 360px;
-  }
-  canvas {
-    position: absolute;
-    inset: 0;
     width: 100%;
     height: 100%;
-    display: block;
-    cursor: grab;
-  }
-  canvas:active {
-    cursor: grabbing;
-  }
-  .scene-markers {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-  .actor-marker {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    width: 44px;
-    height: 44px;
-    min-height: 44px;
-    padding: 0;
-    display: grid;
-    place-items: center;
-    border: 0;
-    border-radius: 50%;
-    background: none;
-    pointer-events: auto;
-  }
-  .marker-number {
-    display: grid;
-    place-items: center;
-    width: 27px;
-    height: 27px;
-    border: 1px solid #6c7e88;
-    border-radius: 50%;
-    background: #131a23;
-    color: #d2e3dc;
-    font: 12px var(--mono);
-    box-shadow: 0 3px 12px #0005;
-  }
-  .actor-marker:hover {
-    background: none;
-  }
-  .actor-marker:hover .marker-number {
-    border-color: var(--mint);
-    color: var(--mint);
-  }
-  .marker-selected .marker-number {
-    background: var(--orange);
-    border-color: var(--orange);
-    color: #1b100b;
-    box-shadow: 0 0 0 4px #ff744b15;
-  }
-  .scene-message {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 12px;
-    padding: 35px;
-    text-align: center;
-  }
-  .fallback-symbol {
-    color: var(--mint);
-    font-size: 42px;
-  }
-  .scene-message strong {
-    font-size: 16px;
+    border: 1px solid var(--ink);
+    box-shadow: 8px -8px 0 #bcc3b7;
+    font-size: 38px;
     font-weight: 500;
-  }
-  .scene-message p {
-    font-size: 13px;
-    line-height: 1.65;
-    color: var(--muted);
-    max-width: 300px;
-  }
-  .canvas-actions {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    align-self: center;
-    max-width: calc(100% - 24px);
-    gap: 12px;
-    margin: 8px 12px 14px;
-    padding: 5px;
-    background: #151c25;
-    border: 1px solid #2c3743;
-    border-radius: 12px;
-    box-shadow: 0 6px 24px #0003;
-  }
-  .canvas-primary,
-  .canvas-selection {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    min-width: 0;
-  }
-  .canvas-actions button {
-    min-height: 44px;
-    border-radius: 8px;
-    padding: 0 12px;
-    font-size: 12px;
-    white-space: nowrap;
     gap: 7px;
+    padding: 12px 0;
   }
   .canvas-add {
-    color: #1d130e;
-    background: var(--orange);
-    border: 1px solid transparent;
-    font-weight: 600;
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
   }
   .canvas-add:hover:not(:disabled) {
-    background: #ff906e;
+    background: #343a32;
   }
-  .canvas-selection {
-    border-left: 1px solid #34404c;
-    padding-left: 12px;
+  .add-caption {
+    font:
+      12px ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+    letter-spacing: 0;
   }
-  .canvas-selection > span {
-    color: #d6dee6;
-    font: 11px var(--mono);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .flat .headline-add {
+    box-shadow: none;
   }
-  .canvas-actions .canvas-remove {
-    min-width: 44px;
-    padding: 0;
-    color: #a8b5c1;
-    background: transparent;
-    border: 1px solid transparent;
-  }
-  .canvas-actions .canvas-remove:hover:not(:disabled) {
-    background: #42271f;
-    color: #ffb69e;
-  }
-  .canvas-actions .undo-remove {
-    color: #bac8d4;
-    background: transparent;
-    border: 1px solid transparent;
-    padding: 0 9px;
-  }
-  .canvas-actions .undo-remove:hover:not(:disabled) {
-    background: #25313f;
-    color: var(--ink);
-  }
-  @media (max-width: 420px) {
-    .canvas-actions {
-      gap: 8px;
-    }
-    .canvas-selection {
-      padding-left: 8px;
-    }
-    .canvas-actions button {
-      padding-inline: 9px;
-    }
-  }
-  .activity-line {
-    flex-wrap: wrap;
-  }
-  .field-controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    padding: 7px 18px;
-    gap: 6px 14px;
-    border-top: 1px solid #1f2833;
-  }
-  .message-legend {
-    display: flex;
-    gap: 16px;
-    font: 12px var(--mono);
-    color: #a3b1bf;
-  }
-  .message-legend > span {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-  }
-  .message-legend i {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--orange);
-  }
-  .message-legend .event-color {
-    background: var(--mint);
-  }
-  .gateway-legend {
-    color: #b0bdc9;
-  }
-  .gateway-legend > span {
-    color: var(--orange);
-    font-size: 12px;
-  }
-  .camera-controls {
-    display: flex;
-    gap: 2px;
-  }
-  .camera-controls button {
+  .waiting-slot {
     display: inline-flex;
+    width: 132px;
+    height: 118px;
     align-items: center;
     justify-content: center;
-    min-height: 44px;
-    min-width: 44px;
-    padding: 7px;
-    border: 1px solid transparent;
-    border-radius: 5px;
-    background: none;
-    color: #a2adb9;
-    font-size: 13px;
-    gap: 0;
-    font-weight: 450;
-  }
-  .camera-controls button:nth-child(2) {
-    min-width: 58px;
-  }
-  .camera-controls button:last-child {
-    min-width: 100px;
-  }
-  .camera-controls button:hover:not(:disabled) {
-    background: #1c2631;
-    color: var(--ink);
-    border-color: #34404b;
+    font-size: 55px;
+    color: var(--muted);
   }
   .svelte-client {
+    grid-column: 2;
+    grid-row: 1 / 3;
     min-width: 0;
-    border-left: 1px solid #303540;
-    background: #12161f;
+    scroll-margin-top: 18px;
+    padding-top: 10px;
   }
   .client-chrome {
     display: flex;
-    align-items: center;
+    justify-content: space-between;
     gap: 12px;
-    height: 42px;
-    padding: 0 20px;
-    border-bottom: 1px solid #272e39;
-    background: #191e28;
-    color: #bac0ca;
-    font: 11px var(--mono);
-  }
-  .window-dots {
-    display: flex;
-    gap: 4px;
-  }
-  .window-dots i {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #59616e;
-  }
-  .client-live {
-    margin-left: auto;
-    color: #87919f;
-    font-size: 9px;
-    letter-spacing: 0.1em;
-  }
-  .client-live.is-connected {
-    color: var(--mint);
+    border-bottom: 1px solid var(--ink);
+    padding-bottom: 15px;
+    font:
+      10px/1.5 ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+    color: var(--muted);
   }
   .client-content {
-    display: flex;
-    flex-direction: column;
-    min-height: 498px;
-    height: auto;
-    padding: 22px 24px 16px;
+    padding-top: 20px;
   }
   .client-actor {
     display: flex;
     align-items: center;
-    gap: 11px;
+    gap: 10px;
   }
-  .actor-index {
-    display: grid;
-    place-items: center;
-    width: 34px;
-    height: 34px;
-    background: #252725;
-    color: var(--orange);
-    border: 1px solid #49372e;
-    border-radius: 7px;
-    font: 11px var(--mono);
+  .selection-mark {
+    width: 9px;
+    height: 9px;
+    background: var(--red);
     flex-shrink: 0;
   }
-  .client-actor > div {
-    min-width: 0;
-    flex: 1;
+  .client-actor h2 {
+    font:
+      600 15px/1.5 ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+    overflow-wrap: anywhere;
   }
-  .client-label {
-    font: 10px var(--mono);
-    letter-spacing: 0.11em;
-    color: #939eab;
+  .client-actor h2:focus {
+    outline: 2px solid var(--red);
+    outline-offset: 5px;
   }
-  .client-actor h4 {
-    color: var(--ink);
-    font-size: 19px;
-    font-weight: 500;
-    line-height: 1.4;
-    margin: 2px 0 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .client-state {
-    padding: 27px 0 24px;
+  .selected-key {
+    display: block;
+    font:
+      12px/1.65 ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    color: var(--muted);
+    margin: 8px 0 16px;
   }
   .client-state output {
     display: block;
-    color: var(--ink);
     font:
-      500 clamp(64px, 6vw, 86px)/1.1 "Space Grotesk",
-      sans-serif;
-    letter-spacing: -0.065em;
-    font-variant-numeric: tabular-nums;
+      500 38px/1.1 ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+    letter-spacing: -0.04em;
     overflow-wrap: anywhere;
   }
+  .client-state output.long-value {
+    font-size: 22px;
+    letter-spacing: 0;
+  }
   .client-state p {
-    color: #8996a3;
-    font-size: 13px;
-    margin: 10px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted);
+    margin: 8px 0 17px;
+  }
+  .selected-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 9px;
+  }
+  .selected-actions .increment-action {
+    background: var(--red);
+    color: white;
+    border-color: var(--red);
   }
   .client-buttons {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
   }
   .client-buttons button {
-    min-height: 44px;
-    padding: 10px 12px;
-    border-radius: 6px;
-    gap: 0;
+    flex: 0 0 auto;
     white-space: nowrap;
-    font-size: 14px;
-    font-weight: 600;
   }
-  .increment-action {
-    flex: 1;
-    background: var(--orange);
-    border: 1px solid var(--orange);
-    color: #20100a;
+  .client-buttons .canvas-remove {
+    border-color: transparent;
+    text-decoration: underline;
+    text-underline-offset: 4px;
   }
-  .increment-action:hover:not(:disabled) {
-    background: #ff8e6b;
-    border-color: #ff8e6b;
+  .client-buttons .canvas-add {
+    margin-left: auto;
   }
-  .http-action {
-    background: #1c242e;
-    border: 1px solid #36414d;
-    color: #c6d5d4;
+  .connection-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 9px;
   }
-  .http-action:hover:not(:disabled) {
-    background: #273540;
-    color: var(--ink);
+  .connection-actions button {
+    border: 0;
+    padding: 6px 0;
+    text-decoration: underline;
+    text-underline-offset: 4px;
+    text-align: left;
+  }
+  .connection-actions button:hover {
+    background: transparent;
+  }
+  .connection-actions span {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .count-recovery {
+    margin: 10px 0;
   }
   .client-error {
     font-size: 12px;
-    color: #ffb69f;
-    line-height: 1.5;
-    margin: 10px 0 0;
-  }
-  .key-form {
-    margin-top: 24px;
-  }
-  .key-form > label {
-    display: block;
-    color: #a3aebb;
-    font-size: 12px;
-    margin-bottom: 8px;
-  }
-  .key-form > div {
-    display: flex;
-    gap: 7px;
-  }
-  .key-form input {
-    width: 100%;
-    min-width: 0;
-    padding: 9px 10px;
-    background: #0d121a;
-    border: 1px solid #303b48;
-    border-radius: 5px;
-    color: #e0e6e8;
-    font: 13px var(--mono);
-  }
-  .key-form button {
-    min-height: 44px;
-    padding: 8px 11px;
-    background: #222d37;
-    color: #d1e0de;
-    border: 1px solid #3c4b57;
-    border-radius: 5px;
-    font-size: 11px;
-    gap: 0;
-  }
-  .key-form button:hover {
-    background: #2d3d48;
-    color: var(--ink);
-  }
-  .key-form p {
-    color: #a3a9b3;
-    font-size: 13px;
     line-height: 1.6;
-    margin: 8px 0 0;
-  }
-  .client-footer {
-    margin-top: auto;
-    min-height: 38px;
-    padding-top: 14px;
-    border-top: 1px solid #29323c;
-  }
-  .disconnect-action {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 14px;
-    width: 100%;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: none;
-    color: #a7b4c1;
-    font-size: 11px;
-    min-height: 44px;
-    font-weight: 450;
-  }
-  .disconnect-action:hover {
-    background: none;
-    color: #ffb69f;
-  }
-  .actor-dock {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 7px;
-    padding: 17px 24px;
-    border-top: 1px solid #2b323d;
-    background: #10151d;
-    min-width: 0;
-  }
-  .actor-chip {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    max-width: 100%;
-    min-height: 44px;
-    padding: 8px 10px;
-    border: 1px solid #303b46;
-    border-radius: 5px;
-    background: #17202a;
-    color: #a7b6c2;
-    font-size: 11px;
-    font-weight: 450;
-  }
-  .actor-chip:hover {
-    background: #21303a;
-    border-color: #526579;
-    color: var(--ink);
-  }
-  .actor-chip.chip-selected {
-    border-color: #8f5a44;
-    background: #2a211e;
-    color: #ffd4bf;
-  }
-  .chip-index {
-    color: #8b9f96;
-    font: 10px var(--mono);
-    padding-right: 7px;
-    border-right: 1px solid #39443d;
-  }
-  .chip-selected .chip-index {
-    color: var(--orange);
-    border-right-color: #654532;
-  }
-  .chip-name {
-    min-width: 0;
-    max-width: 16ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .connection-budget {
-    margin-left: auto;
-    color: #7f8e9d;
-    font: 10px var(--mono);
-    white-space: nowrap;
+    color: #9d2819;
+    margin: 10px 0;
   }
   .activity-line {
     display: flex;
-    align-items: center;
-    gap: 11px;
-    padding: 12px 24px;
-    border-top: 1px solid #28323d;
-    color: #9cacb9;
-    font: 13px/1.6 var(--mono);
+    gap: 9px;
+    padding: 14px 0;
+    min-height: 64px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    margin-top: 10px;
+    font:
+      12px/1.65 ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
     overflow-wrap: anywhere;
   }
-  .activity-line > span {
-    color: var(--mint);
-    font-size: 17px;
+  .activity-line > span:last-child {
+    min-width: 0;
+  }
+  .removal-recovery {
+    display: flex;
+    gap: 10px 14px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin: 12px 0;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .removal-recovery p {
+    flex-basis: 100%;
+  }
+  .empty-copy {
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 12px 0;
+  }
+  .connection-settings {
+    margin-top: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  .connection-settings summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-height: 48px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 12px;
+  }
+  .connection-settings summary::-webkit-details-marker {
+    display: none;
+  }
+  .key-form {
+    padding: 8px 0 15px;
+  }
+  .key-form label {
+    display: block;
+    font-size: 12px;
+    margin-bottom: 7px;
+  }
+  .key-input-row {
+    display: flex;
+    gap: 8px;
+  }
+  .key-form input {
+    min-width: 0;
+    width: 100%;
+    min-height: 44px;
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--line);
+    padding: 9px;
+    font:
+      13px ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+  }
+  .key-form p {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--muted);
+    margin-top: 9px;
+  }
+  .neighbor-field {
+    grid-column: 1;
+    grid-row: 2;
+    min-width: 0;
+    margin: 28px 0 0;
+  }
+  .field-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    font:
+      10px/1.5 ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+    color: var(--muted);
+    margin-bottom: 13px;
+  }
+  .actor-dock {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px 14px;
+    max-height: 370px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    padding: 8px 10px 10px 0;
+  }
+  .actor-slot {
+    min-width: 0;
+  }
+  .available-slot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 132px;
+    height: 118px;
+    margin: 12px 10px 44px 0;
+    border: 1px dashed var(--line);
+    color: var(--muted);
+    font:
+      11px ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+  }
+  .playground-intro {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    display: grid;
+    border-top: 1px solid var(--line);
+    padding-top: 24px;
+    margin-top: 28px;
+  }
+  .playground-intro p {
+    font-size: 14px;
+    line-height: 1.65;
+    max-width: 760px;
+    color: var(--muted);
   }
   .code-workspace {
-    border-top: 1px solid #303945;
-    background: #0c1017;
+    background: var(--ink);
+    color: var(--paper);
+    min-width: 0;
   }
   .code-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 0 24px;
-    border-bottom: 1px solid #252d39;
+    padding: 0 22px;
+    border-bottom: 1px solid #434a40;
   }
   .code-toolbar > div {
     display: flex;
-    gap: 23px;
+    gap: 22px;
+    flex-wrap: wrap;
   }
   .code-toolbar button {
-    min-height: 48px;
-    padding: 0;
-    background: none;
-    color: #8e9bad;
     border: 0;
     border-bottom: 2px solid transparent;
-    border-radius: 0;
-    font-size: 12px;
-    gap: 0;
-    font-weight: 500;
-  }
-  .code-toolbar button:hover {
+    padding: 12px 0;
     background: none;
-    color: #d7e4df;
+    color: #bbc2b6;
+    min-height: 48px;
+    font-size: 12px;
   }
-  .code-toolbar .tab-active {
-    color: #9ce9c6;
-    border-bottom-color: var(--mint);
+  .code-toolbar button.tab-active {
+    color: var(--paper);
+    border-bottom-color: #f18168;
   }
   .code-toolbar > span {
-    font: 9px var(--mono);
-    color: #6d7d8d;
-    letter-spacing: 0.1em;
+    font:
+      10px ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+    color: #bbc2b6;
   }
   .code-workspace pre {
-    height: 212px;
     margin: 0;
-    padding: 24px;
+    height: 250px;
     overflow: auto;
-    color: #b9d6c7;
-    font: 13px/1.85 var(--mono);
-    scrollbar-width: thin;
+    max-width: 100%;
+    padding: 22px;
+    white-space: pre;
+    font:
+      12px/1.8 ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+  }
+  .code-workspace.compact-code pre {
+    height: 120px;
   }
   .playground-footnote {
     display: flex;
+    align-items: start;
     justify-content: space-between;
-    gap: 20px;
-    padding: 16px 24px;
-    border-top: 1px solid #252d39;
-    color: #a3a9b3;
-    font-size: 13px;
-    line-height: 1.6;
+    gap: 28px;
+    border-top: 1px solid #434a40;
+    padding: 18px 22px;
+    color: #bbc2b6;
+    font-size: 12px;
+    line-height: 1.65;
+  }
+  .playground-footnote span {
+    max-width: 690px;
   }
   .playground-footnote a {
-    color: #b0c4bc;
+    flex-shrink: 0;
+    color: var(--paper);
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
     white-space: nowrap;
-    text-decoration: none;
+    border: 0;
   }
-  .playground-footnote a:hover {
-    color: var(--mint);
-  }
-  .session-status {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 9px 12px;
-    padding: 12px 26px;
-    border-bottom: 1px solid var(--line);
-    color: var(--muted);
-    font-size: 12px;
-    background: #111720;
-  }
-  .session-status code {
-    color: #b5c8bf;
-    font: 11px var(--mono);
-  }
-  .session-members {
-    margin-left: auto;
-  }
-  .session-members strong {
-    color: var(--ink);
-    font-weight: 500;
-  }
-  .temporary-session {
-    color: #e4be9f;
-    font-size: 11px;
-  }
-  .session-error {
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    padding: 14px 26px;
-    border-bottom: 1px solid #56382f;
-    background: #241b19;
-  }
-  .session-error p {
-    color: #ffc5ae;
-    font-size: 13px;
-    line-height: 1.6;
-    margin: 0;
-    flex: 1;
-  }
-  .session-error button,
-  .reconnect-action {
-    min-height: 44px;
-    padding: 9px 13px;
-    border-radius: 5px;
-    gap: 0;
-    font-size: 12px;
-  }
-  .client-loading {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    gap: 14px;
-    padding: 30px;
-    min-height: 498px;
-    height: auto;
-    text-align: center;
-  }
-  .client-loading strong {
-    color: var(--ink);
-    font-weight: 500;
-  }
-  .client-loading p {
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1.7;
-  }
-  .code-toolbar > div {
-    flex-wrap: wrap;
-    gap: 0 23px;
+  @media (max-width: 1099px) {
+    .runtime-grid {
+      display: flex;
+      flex-direction: column;
+      padding-top: 28px;
+      gap: 0;
+    }
+    .headline {
+      width: 100%;
+      font-size: clamp(56px, 8vw, 88px);
+    }
+    .headline-subline {
+      font-size: 0.72em;
+    }
+    .svelte-client {
+      width: 100%;
+      margin-top: 28px;
+    }
+    .neighbor-field {
+      width: 100%;
+      margin-top: 28px;
+    }
+    .actor-dock {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .playground-intro {
+      width: 100%;
+      gap: 28px;
+    }
   }
   @media (max-width: 700px) {
     .session-status {
-      padding: 12px 17px;
+      gap: 8px 12px;
+      flex-wrap: wrap;
+      padding: 8px 0;
+      font-size: 11px;
     }
-    .session-members {
+    .session-identity {
+      flex: 1;
+      min-width: 130px;
+    }
+    .session-counts {
       margin-left: 0;
+      order: 3;
+      flex-basis: 100%;
+      padding-bottom: 3px;
     }
     .session-error {
-      padding: 14px 17px;
       flex-wrap: wrap;
     }
-    .client-loading {
-      min-height: 400px;
-    }
-    .code-toolbar > div {
-      gap: 0 16px;
-    }
-  }
-  @media (max-width: 960px) {
     .runtime-grid {
-      grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+      padding-top: 18px;
+      padding-bottom: 24px;
     }
-    .toolbar-heading h3 {
-      font-size: 21px;
+    .headline {
+      font-size: 52px;
     }
-    .toolbar-actions {
-      gap: 16px;
+    .headline-line {
+      gap: 12px;
+      min-height: 135px;
     }
-    .client-content {
-      padding: 21px 19px 16px;
+    .headline-period {
+      margin-left: -6px;
     }
-    .field-heading > span:last-child {
-      display: none;
+    .headline-subline {
+      font-size: 0.73em;
+      margin-top: 8px;
     }
-    .field-controls {
-      padding: 7px 10px;
+    .vacant-slot {
+      width: 86px;
+      height: 86px;
+      margin: 12px 5px 44px 0;
     }
-    .message-legend {
-      gap: 10px;
+    .headline-add {
+      font-size: 28px;
     }
-    .camera-controls button {
-      padding: 6px;
+    .add-caption {
+      font-size: 11px;
     }
-    .playground-footnote {
-      flex-direction: column;
-      gap: 8px;
-    }
-  }
-  @media (max-width: 700px) {
-    .playground-toolbar {
-      align-items: flex-start;
-      padding: 21px 18px;
-      gap: 18px;
-      flex-wrap: wrap;
-    }
-    .toolbar-heading {
-      width: 100%;
-    }
-    .toolbar-heading h3 {
-      font-size: 23px;
-    }
-    .toolbar-actions {
-      width: 100%;
-      justify-content: space-between;
-    }
-    .runtime-grid {
-      height: auto;
-      grid-template-columns: 1fr;
-    }
-    .actor-field {
-      height: 450px;
-    }
-    .scene-viewport {
-      min-height: 0;
-    }
-    .field-heading {
-      padding: 19px 17px 0;
-    }
-    .field-controls {
-      padding: 6px 12px;
-    }
-    .message-legend {
-      width: 100%;
-      gap: 18px;
-    }
-    .camera-controls {
-      width: 100%;
-      justify-content: flex-end;
-    }
-    .gateway-legend {
-      display: flex;
-    }
-    .camera-controls button {
-      min-height: 44px;
+    .waiting-slot {
+      width: 86px;
+      height: 86px;
+      font-size: 42px;
     }
     .svelte-client {
-      border-left: 0;
-      border-top: 1px solid #2e3641;
+      margin-top: 24px;
+      padding-top: 0;
+    }
+    .client-chrome {
+      font-size: 10px;
+      padding-bottom: 12px;
     }
     .client-content {
-      height: auto;
-      min-height: 450px;
-      padding: 23px;
+      padding-top: 15px;
     }
-    .client-state {
-      padding: 24px 0;
+    .client-actor h2 {
+      font-size: 14px;
+    }
+    .selected-key {
+      font-size: 12px;
+      margin-bottom: 14px;
     }
     .client-state output {
-      font-size: 76px;
+      font-size: 34px;
     }
-    .client-state p,
-    .key-form p {
-      font-size: 13px;
+    .client-state output.long-value {
+      font-size: 20px;
+    }
+    .client-buttons {
+      gap: 7px;
+    }
+    .client-buttons button {
+      min-width: 70px;
+      padding: 9px 7px;
+    }
+    .connection-actions {
+      gap: 12px;
+    }
+    .connection-actions span {
+      font-size: 11px;
     }
     .key-form input {
       font-size: 16px;
     }
-    .client-footer {
-      margin-top: 22px;
+    .field-heading {
+      font-size: 10px;
+    }
+    .field-scroll-hint {
+      display: none;
     }
     .actor-dock {
-      padding: 16px 17px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px 18px;
+      max-height: none;
+      overflow: visible;
     }
-    .actor-chip {
-      min-height: 44px;
-      font-size: 12px;
+    .available-slot {
+      width: 86px;
+      height: 86px;
+      font-size: 11px;
+      margin-right: 5px;
     }
-    .connection-budget {
-      width: 100%;
-      margin-top: 5px;
+    .playground-intro {
+      grid-template-columns: 1fr;
+      gap: 15px;
+      padding-top: 18px;
+      margin-top: 22px;
     }
-    .activity-line {
-      padding: 13px 17px;
+    .playground-intro p {
+      font-size: 13px;
     }
     .code-toolbar {
-      padding: 0 17px;
+      padding: 0 16px;
     }
     .code-toolbar > div {
-      gap: 17px;
-    }
-    .code-toolbar button {
-      font-size: 11px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0 20px;
+      width: 100%;
     }
     .code-toolbar > span {
       display: none;
     }
     .code-workspace pre {
-      padding: 20px 17px;
-      font-size: 13px;
+      padding: 16px;
+      height: 220px;
+      font-size: 12px;
     }
     .playground-footnote {
-      padding: 15px 17px;
+      padding: 16px;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .playground-footnote a {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+    }
+  }
+  @media (max-width: 370px) {
+    .headline {
+      font-size: 46px;
+    }
+    .headline-line {
+      gap: 10px;
+    }
+    .headline-subline {
+      font-size: 0.72em;
     }
   }
   @media (prefers-reduced-motion: reduce) {

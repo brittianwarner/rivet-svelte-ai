@@ -1,6 +1,22 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
+import { openKeySettings } from "./playground-helpers";
+
+test("keyboard navigation reveals the skip link and reaches main content", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const skip = page.getByRole("link", { name: "Skip to content" });
+  await page.keyboard.press("Tab");
+  await expect(skip).toBeFocused();
+  await expect(skip).toHaveCSS("clip-path", "none");
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/#main$/);
+  await page.keyboard.press("Tab");
+  await expect(skip).not.toBeFocused();
+  await expect(skip).toHaveCSS("clip-path", "inset(50%)");
+});
 
 test("browser credential outages retry slowly and recover", async ({
   page,
@@ -30,8 +46,8 @@ test("SSR includes the learning page before JavaScript connects", async ({
   const response = await request.get("/");
   expect(response.ok()).toBeTruthy();
   const html = await response.text();
-  expect(html).toContain("Build apps");
-  expect(html).toContain("stay in sync.");
+  expect(html).toContain("Change");
+  expect(html).toContain("One at a time.");
   expect(html).toContain("bun install");
   expect(html).toContain("Connecting to your actors");
 });
@@ -45,27 +61,28 @@ test("two tabs share an actor over sockets and HTTP, and reload restores state",
   await page.goto("/");
   const key = `test-${crypto.randomUUID()}`;
   const counter = page.getByRole("region", { name: "Svelte client" });
+  await openKeySettings(page);
   await page.getByLabel("Actor key").fill(key);
   await counter.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(
-    counter.getByRole("button", { name: "+ Increment", exact: true }),
+    page.getByRole("button", { name: "+ Increment", exact: true }),
   ).toBeEnabled();
   const second = await context.newPage();
   await second.goto("/");
   const other = second.getByRole("region", { name: "Svelte client" });
+  await openKeySettings(second);
   await second.getByLabel("Actor key").fill(key);
   await other.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(
-    other.getByRole("button", { name: "+ Increment", exact: true }),
+    second.getByRole("button", { name: "+ Increment", exact: true }),
   ).toBeEnabled();
-  await counter
-    .getByRole("button", { name: "+ Increment", exact: true })
-    .click();
+  await page.getByRole("button", { name: "+ Increment", exact: true }).click();
   await expect(counter.getByLabel("Counter value")).toHaveText("1");
   await expect(other.getByLabel("Counter value")).toHaveText("1");
   await other.getByRole("button", { name: "+ Via HTTP" }).click();
   await expect(counter.getByLabel("Counter value")).toHaveText("2");
   await second.reload();
+  await openKeySettings(second);
   await second.getByLabel("Actor key").fill(key);
   await other.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(other.getByLabel("Counter value")).toHaveText("2");
@@ -141,13 +158,14 @@ test("socket reconnect fetches changes missed while disconnected", async ({
   await page.goto("/");
   const key = `reconnect-${crypto.randomUUID()}`;
   const counter = page.getByRole("region", { name: "Svelte client" });
+  await openKeySettings(page);
   await page.getByLabel("Actor key").fill(key);
   await counter.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(
     counter.getByRole("heading", { name: "counter-02", exact: true }),
   ).toBeVisible();
   await expect(
-    counter.getByRole("button", { name: "+ Increment", exact: true }),
+    page.getByRole("button", { name: "+ Increment", exact: true }),
   ).toBeEnabled();
   disconnected = true;
   await Promise.all(
@@ -156,7 +174,7 @@ test("socket reconnect fetches changes missed while disconnected", async ({
     ),
   );
   await expect(
-    counter.getByRole("button", { name: "+ Increment", exact: true }),
+    page.getByRole("button", { name: "+ Increment", exact: true }),
   ).toBeDisabled();
   const response = await request.post(`/api/counters/${key}/increment`, {
     data: { by: 3 },
@@ -165,7 +183,7 @@ test("socket reconnect fetches changes missed while disconnected", async ({
   disconnected = false;
   await expect(counter.getByLabel("Counter value")).toHaveText("3");
   await expect(
-    counter.getByRole("button", { name: "+ Increment", exact: true }),
+    page.getByRole("button", { name: "+ Increment", exact: true }),
   ).toBeEnabled();
 });
 
@@ -186,12 +204,13 @@ test("mobile navigation, key guidance, and long actor keys remain usable", async
   await expect(
     page
       .getByRole("navigation", { name: "Main navigation" })
-      .getByRole("link", { name: "Playground", exact: true }),
+      .getByRole("link", { name: "Get started", exact: true }),
   ).toBeVisible();
   const counter = page.getByRole("region", { name: "Svelte client" });
+  await openKeySettings(counter);
   const input = page.getByLabel("Actor key", { exact: false });
-  await expect(page.locator("#playground-key-help")).toContainText(
-    "letters, numbers, or hyphens",
+  await expect(counter.locator(".key-form p")).toContainText(
+    "letters, numbers or hyphens",
   );
   await input.fill("Team-Room");
   await counter.getByRole("button", { name: "Connect", exact: true }).click();
@@ -204,11 +223,11 @@ test("mobile navigation, key guidance, and long actor keys remain usable", async
     .locator(".actor-dock");
   expect(
     await dock.evaluate(
-      (element) => element.scrollWidth <= element.clientWidth,
+      (element) => element.getBoundingClientRect().right <= innerWidth,
     ),
   ).toBeTruthy();
   await expect(
-    counter.getByRole("button", { name: "+ Increment", exact: true }),
+    page.getByRole("button", { name: "+ Increment", exact: true }),
   ).toBeEnabled();
 });
 
