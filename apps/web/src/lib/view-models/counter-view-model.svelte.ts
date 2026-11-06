@@ -14,6 +14,9 @@ type CounterActor = ReactiveActorHandle<typeof registry, "counter">;
 export class CounterViewModel {
   name = $state("demo");
   count = $state(0);
+  hasValue = $state(false);
+  snapshotPending = $state(false);
+  snapshotError = $state<string | null>(null);
   error = $state<string | null>(null);
   httpPending = $state(false);
   actor = $state.raw<CounterActor | null>(null);
@@ -52,6 +55,12 @@ export class CounterViewModel {
     this.#close();
   }
 
+  /** Retry the read without sending a mutation or replacing the socket. */
+  async refreshCount(): Promise<void> {
+    const actor = this.actor;
+    if (actor?.isConnected) await this.#pullCount(actor, this.name);
+  }
+
   /** Reconnect when the counter name changes. */
   useName(name: string): void {
     const next = name.trim().toLowerCase();
@@ -76,6 +85,7 @@ export class CounterViewModel {
     }
 
     this.count = Math.max(this.count, next);
+    this.hasValue = true;
     this.error = null;
   }
 
@@ -106,6 +116,7 @@ export class CounterViewModel {
         return;
       }
       this.count = Math.max(this.count, body.count);
+      this.hasValue = true;
     } catch (error) {
       if (this.name !== name || this.actor !== actor) return;
       this.error =
@@ -118,10 +129,15 @@ export class CounterViewModel {
   }
 
   #open(name: string): void {
+    const sameKey = this.name === name;
     this.#close();
     this.error = null;
+    this.snapshotError = null;
     this.name = name;
-    this.count = 0;
+    if (!sameKey) {
+      this.count = 0;
+      this.hasValue = false;
+    }
     const actor = this.#rivet.createReactiveActor({
       name: "counter",
       key: ["counter", name],
@@ -129,12 +145,15 @@ export class CounterViewModel {
     });
     actor.onEvent("newCount", (count: number) => {
       this.count = Math.max(this.count, count);
+      this.hasValue = true;
     });
     this.actor = actor;
     this.#unmount = actor.mount();
   }
 
   #close(): void {
+    this.#pullId++;
+    this.snapshotPending = false;
     this.#unmount?.();
     this.actor?.dispose();
     this.#unmount = null;
@@ -143,15 +162,19 @@ export class CounterViewModel {
 
   async #pullCount(actor: CounterActor, name: string): Promise<void> {
     const pullId = ++this.#pullId;
+    this.snapshotPending = true;
+    this.snapshotError = null;
     const count = await actor.getCount();
-    if (
-      pullId !== this.#pullId ||
-      this.name !== name ||
-      this.actor !== actor ||
-      count == null
-    ) {
+    if (pullId !== this.#pullId || this.name !== name || this.actor !== actor) {
+      return;
+    }
+    this.snapshotPending = false;
+    if (count == null) {
+      this.snapshotError =
+        "Could not load the saved count. Try loading it again.";
       return;
     }
     this.count = Math.max(this.count, count);
+    this.hasValue = true;
   }
 }

@@ -62,9 +62,7 @@ test("session actor retains the registry across reloads and tabs while visitors 
     .getByLabel("Actor key", { exact: true })
     .inputValue();
   expect(secondKey).not.toBe(firstKey);
-  await client
-    .getByRole("button", { name: "+ Increment", exact: true })
-    .click();
+  await page.getByRole("button", { name: "+ Increment", exact: true }).click();
   await expect(client.getByLabel("Counter value", { exact: true })).toHaveText(
     "1",
   );
@@ -152,7 +150,9 @@ test("canvas add, remove, and undo synchronize membership and preserve counter s
   context,
 }) => {
   await page.goto("/#playground");
-  const canvasControls = page.getByLabel("Canvas actor controls");
+  const canvasControls = page.getByRole("region", {
+    name: "Live actor anatomy",
+  });
   const saved = page.getByLabel("Session actors", { exact: true });
   await expect(saved).toHaveText("1");
   const other = await context.newPage();
@@ -195,12 +195,19 @@ test("canvas add, remove, and undo synchronize membership and preserve counter s
   await expect(saved).toHaveText("0");
   await page.reload();
   await expect(
-    page.getByText("Your canvas is ready.", { exact: true }),
+    page.getByText(
+      "Your session is intentionally empty. Add an actor when you are ready.",
+      { exact: true },
+    ),
   ).toBeVisible();
   await expect(saved).toHaveText("0");
   await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
     "0",
   );
+  await page.screenshot({
+    path: "test-results/design-empty.png",
+    fullPage: true,
+  });
   await canvasControls.getByRole("button", { name: "Add actor" }).click();
   await expect(saved).toHaveText("1");
   await expect(page.getByLabel("Counter value", { exact: true })).toHaveText(
@@ -222,7 +229,7 @@ test("canvas add, remove, and undo synchronize membership and preserve counter s
   await page.getByRole("button", { name: "Undo remove", exact: true }).click();
   await expect(saved).toHaveText("7");
   await expect(
-    canvasControls.getByRole("button", { name: /Remove .* from playground/ }),
+    page.getByRole("region", { name: "Svelte client" }).getByRole("heading"),
   ).toBeFocused();
   await canvasControls
     .getByRole("button", { name: /Remove .* from playground/ })
@@ -257,7 +264,7 @@ test("mobile canvas controls support keyboard removal and undo without WebGL", a
   });
   await page.goto("/#playground");
   await expect(
-    page.getByText("3D view unavailable.", { exact: true }),
+    page.getByRole("button", { name: "Flat view", exact: true }),
   ).toBeVisible();
   const add = page.getByRole("button", { name: "Add actor" });
   await add.click();
@@ -272,7 +279,9 @@ test("mobile canvas controls support keyboard removal and undo without WebGL", a
   await expect(page.getByLabel("Session actors", { exact: true })).toHaveText(
     "1",
   );
-  await expect(add).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Undo remove", exact: true }),
+  ).toBeFocused();
   await expect(
     page.getByRole("button", { name: "Undo remove", exact: true }),
   ).toBeInViewport();

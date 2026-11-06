@@ -21,7 +21,7 @@ This is a community-built Rivet Actors + SvelteKit starter and workspace Svelte 
 | `apps/web/src/routes/`                             | SSR page, layout, and API proxy                                          |
 | `apps/web/src/lib/view-models/`                    | Browser connection ownership, actions, and reconnect snapshots           |
 | `apps/web/src/lib/components/`                     | Svelte presentation and accessible controls                              |
-| `apps/web/src/lib/visuals/`                        | Three.js scene and displayed Svelte code examples                        |
+| `apps/web/src/lib/visuals/`                        | Displayed Svelte code examples                                           |
 | `packages/wire/`                                   | Browser-safe shared contracts, validation patterns, and limits           |
 | `packages/rivetkit-svelte/`                        | Reusable adapter, public API, and lifecycle tests                        |
 | `tests/e2e/`, `tests/fixtures/`, `apps/api/tests/` | Browser acceptance, local provider fixture, and real-engine integration  |
@@ -69,7 +69,7 @@ bun run test:restart                # Isolated API/runner restart acceptance
 - Keep the homepage focused on counters and sessions. Preserve the optional chat implementation for repository users without mounting it on the homepage unless requested.
 - Reflect real actor state in the scene. Keep actor identity stable across additions/removals; show connected counts separately from saved membership. Keep labels readable and controls usable with keyboard, touch, reduced motion, and no WebGL.
 - Prefer one clear control for each action and compact feedback. Avoid duplicate Add controls, overlapping labels, and unnecessary success banners. Keep recovery actions such as Undo near the action that needs them.
-- Dispose Three.js resources, observers, and animation loops. Keep the scene browser-only and preserve its fallback UI.
+- The actor model uses native controls with CSS 3D depth. Keep values and labels in semantic HTML, preserve Flat view and reduced-motion behavior, and avoid adding a separate rendering loop or simulated traffic. Never display an unknown snapshot as a confirmed zero.
 - When changing onboarding or examples, update the relevant docs and `apps/web/src/lib/visuals/actor-examples.ts` so the copy and code match the working package.
 
 ## Railway deployment

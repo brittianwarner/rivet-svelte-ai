@@ -6,7 +6,7 @@ The smallest path through this template is the counter. Read these files in orde
 2. `apps/api/src/actors.ts`
 3. `apps/web/src/lib/components/RivetProvider.svelte`
 4. `apps/web/src/lib/view-models/counter-view-model.svelte.ts`
-5. `apps/web/src/lib/components/CounterPanel.svelte`
+5. `apps/web/src/lib/components/ActorLab.svelte`
 
 ## 1. Define state, commands, and notifications
 
@@ -57,6 +57,7 @@ The view model:
 - subscribes to `newCount` before opening the connection;
 - reads `getCount()` on every connection, including reconnections;
 - guards asynchronous responses so an old actor cannot overwrite a newly selected actor;
+- distinguishes an unknown count from a confirmed zero with `hasValue`, and exposes snapshot pending/error state;
 - exposes reactive fields and methods to the panel;
 - unmounts and disposes the handle when the component leaves the page.
 
@@ -73,13 +74,29 @@ The counter is monotonic, so it can safely keep the larger of a snapshot and a n
   onMount(() => counter.connect());
 </script>
 
-<p>{counter.count}</p>
-<button disabled={!counter.connected} onclick={() => counter.increment()}>
-  Increment
-</button>
+<output>
+  {counter.hasValue
+    ? counter.count
+    : counter.snapshotError
+      ? "Count unavailable"
+      : "Loading saved count…"}
+</output>
+{#if counter.hasValue && (!counter.connected || counter.snapshotPending)}
+  <p>Last known count; waiting for a fresh connection snapshot.</p>
+{/if}
+<button
+  disabled={!counter.connected || counter.actor?.isMutating}
+  onclick={() => counter.increment()}>Increment</button
+>
+
+{#if counter.snapshotError || counter.error}
+  <p role="alert">{counter.snapshotError ?? counter.error}</p>
+{/if}
 ```
 
-Render this beneath `RivetProvider`, as `Playground` does. It should never initialize before the provider exists. The component has no transport details; action errors and reconnect behavior belong to the view model.
+Render this beneath `RivetProvider`, as the homepage playground does. It should never initialize before the provider exists. The component renders only a confirmed value; connection alone does not establish that the saved count has loaded. The view model accepts action and HTTP responses as well as `newCount` events. A successful response does not prove that a socket event was observed.
+
+The playground’s **Svelte connection** example shows component-owned `useActor` with a reactive key; **View model** shows explicit `createReactiveActor` ownership. Both subscribe before fetching a snapshot, reject late results from an old connection, and render an unknown value until a snapshot or event confirms it. Their `Math.max` reconciliation is specific to this increment-only counter. The application view model above also owns HTTP, re-keying, snapshot status, and connection recovery.
 
 ## Try these changes
 
