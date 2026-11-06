@@ -53,8 +53,7 @@ a,
 summary {
   touch-action: manipulation;
 }
-button,
-.button {
+:where(button, .button) {
   display: inline-flex;
   justify-content: center;
   align-items: center;
@@ -74,8 +73,7 @@ button,
     color 0.15s,
     border-color 0.15s;
 }
-button:hover:not(:disabled),
-.button:hover {
+:where(button:hover:not(:disabled), .button:hover) {
   background: var(--red);
   border-color: var(--red);
   color: var(--paper);
