@@ -1,6 +1,75 @@
 import { expect, test } from "@playwright/test";
 import { openKeySettings } from "./playground-helpers";
 
+test("hovering playground controls preserves readable text contrast", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "1",
+  );
+  await page.getByRole("button", { name: "Add actor", exact: true }).click();
+  await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "2",
+  );
+  const controls = page
+    .getByRole("region", { name: "Live actor anatomy" })
+    .getByRole("button");
+  for (const control of await controls.all()) {
+    if (!(await control.isVisible()) || !(await control.isEnabled())) continue;
+    await control.hover();
+    await control.evaluate(async (element) => {
+      await Promise.all(
+        element
+          .getAnimations()
+          .map((animation) => animation.finished.catch(() => {})),
+      );
+    });
+    await expect
+      .poll(
+        async () =>
+          control.evaluate((element) => {
+            const rgb = (value: string) =>
+              (value.match(/[\d.]+/g) || []).map(Number);
+            const luminance = (color: number[]) =>
+              color
+                .slice(0, 3)
+                .map((channel) => {
+                  const s = channel / 255;
+                  return s <= 0.04045
+                    ? s / 12.92
+                    : ((s + 0.055) / 1.055) ** 2.4;
+                })
+                .reduce(
+                  (sum, channel, index) =>
+                    sum + channel * [0.2126, 0.7152, 0.0722][index],
+                  0,
+                );
+            let parent: Element | null = element;
+            let background = [255, 255, 255];
+            while (parent) {
+              const candidate = rgb(getComputedStyle(parent).backgroundColor);
+              if (candidate.length === 3 || candidate[3] === 1) {
+                background = candidate;
+                break;
+              }
+              parent = parent.parentElement;
+            }
+            const foreground = luminance(rgb(getComputedStyle(element).color));
+            const behind = luminance(background);
+            return (
+              (Math.max(foreground, behind) + 0.05) /
+              (Math.min(foreground, behind) + 0.05)
+            );
+          }),
+        {
+          message: `Readable hover contrast: ${(await control.getAttribute("aria-label")) || (await control.textContent())}`,
+        },
+      )
+      .toBeGreaterThanOrEqual(4.5);
+  }
+});
+
 test("a delayed response stays with its actor after selection changes", async ({
   page,
 }) => {
