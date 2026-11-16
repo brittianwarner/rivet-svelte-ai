@@ -1,0 +1,22 @@
+{
+  "name": "@example/entities",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test src"
+  },
+  "peerDependencies": {
+    "rivetkit": "3.1.1"
+  },
+  "devDependencies": {
+    "rivetkit": "3.1.1",
+    "typescript": "^7.0.2",
+    "@types/bun": "^1.4.4"
+  }
+}

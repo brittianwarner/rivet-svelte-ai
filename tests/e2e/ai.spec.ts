@@ -2,12 +2,15 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
 
+// The site origin: scripts reach /api and /rivet exactly as the browser does.
+const serverOrigin = "http://127.0.0.1:5174";
+
 test("optional repository chat actor streams, reconnects, cancels, and recovers", async () => {
   const { stdout } = await promisify(execFile)(
-    process.execPath,
-    ["apps/api/tests/chat-integration.ts"],
+    "bun",
+    ["apps/server/tests/chat-integration.ts"],
     {
-      env: { ...process.env, SMOKE_API_ORIGIN: "http://127.0.0.1:3002" },
+      env: { ...process.env, SMOKE_API_ORIGIN: serverOrigin },
       timeout: 50_000,
     },
   );

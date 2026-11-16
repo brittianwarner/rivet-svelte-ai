@@ -1,0 +1,9 @@
+# Local TLS in front of MinIO. The engine's S3 client only speaks https.
+# `tls internal` mints a local CA; replicas trust it through SSL_CERT_FILE.
+{
+	skip_install_trust
+}
+s3.local, rivet.s3.local {
+	tls internal
+	reverse_proxy minio:9000
+}

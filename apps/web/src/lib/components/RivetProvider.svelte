@@ -1,47 +1,26 @@
 <script lang="ts">
-  import { rivetContext, setActorToken } from "#lib/rivet.js";
+  import { rivetContext, setActorToken, setRivetClient } from "#lib/rivet.js";
   import type { ClientConfig } from "@example/wire";
   import { onDestroy, untrack, type Snippet } from "svelte";
 
   import { createClient } from "@rivetkit/svelte";
-  import type { registry } from "@example/api/actors";
+  import type { AppRegistry } from "@example/actors";
 
   let { config, children }: { config: ClientConfig; children: Snippet } =
     $props();
   // One client per provider lifetime. The parent remounts when configuration changes.
   const initial = untrack(() => config);
-  let nextTokenAttempt = 0;
-  const client = createClient<typeof registry>({
+  // The browser only ever talks to this origin's /rivet edge. The server
+  // attaches the engine credential upstream, so nothing secret reaches here.
+  const client = createClient<AppRegistry>({
     endpoint: initial.rivetEndpoint,
     namespace: initial.rivetNamespace,
-    ...(initial.authenticatedEngine
-      ? {
-          getToken: async () => {
-            // Failed token requests must not turn reconnects into a tight retry loop.
-            const delay = nextTokenAttempt - Date.now();
-            if (delay > 0)
-              await new Promise((resolve) => setTimeout(resolve, delay));
-            nextTokenAttempt = Date.now() + 2_000;
-            const response = await fetch("/api/client-token", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: "{}",
-              signal: AbortSignal.timeout(15_000),
-            });
-            if (!response.ok)
-              throw new Error(
-                "Could not connect to the actor service. Please retry.",
-              );
-            const result = await response.json();
-            if (typeof result.token !== "string" || !result.token)
-              throw new Error("Invalid actor service credential.");
-            nextTokenAttempt = 0;
-            return result.token;
-          },
-        }
-      : {}),
+    // The edge denies /actors; actors resolve through the gateway query path.
+    gateway: { skipReadyWait: true },
+    disableMetadataLookup: true,
   });
   rivetContext.setupWithClient(client);
+  setRivetClient(client);
   setActorToken(initial.actorToken);
   onDestroy(() => {
     void client.dispose();

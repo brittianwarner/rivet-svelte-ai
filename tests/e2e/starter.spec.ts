@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
+
+// The site origin: scripts reach /api and /rivet exactly as the browser does.
+const serverOrigin = "http://127.0.0.1:5174";
 import { openKeySettings } from "./playground-helpers";
 
 test("keyboard navigation reveals the skip link and reaches main content", async ({
@@ -18,26 +21,17 @@ test("keyboard navigation reveals the skip link and reaches main content", async
   await expect(skip).toHaveCSS("clip-path", "inset(50%)");
 });
 
-test("browser credential outages retry slowly and recover", async ({
+test("the browser reaches actors only through this origin's /rivet edge", async ({
   page,
 }) => {
-  let requests = 0;
-  await page.route("**/api/client-token", (route) => {
-    requests++;
-    return route.fulfill({
-      status: 503,
-      contentType: "application/json",
-      body: '{"error":"unavailable"}',
-    });
-  });
+  const hosts = new Set<string>();
+  page.on("request", (request) => hosts.add(new URL(request.url()).host));
+  page.on("websocket", (socket) => hosts.add(new URL(socket.url()).host));
   await page.goto("/");
-  await expect.poll(() => requests).toBeGreaterThan(0);
-  await page.waitForTimeout(3_000);
-  expect(requests).toBeLessThanOrEqual(3);
-  await page.unroute("**/api/client-token");
   await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
     "1",
   );
+  expect([...hosts]).toEqual([new URL(page.url()).host]);
 });
 
 test("SSR includes the learning page before JavaScript connects", async ({
@@ -128,10 +122,10 @@ test("mobile layout fits and API configuration failures can be retried", async (
 
 test("real actor validation and no-key chat settle through the gateway", async () => {
   const { stdout } = await promisify(execFile)(
-    process.execPath,
-    ["--experimental-strip-types", "apps/api/src/smoke.ts"],
+    "bun",
+    ["apps/server/tests/smoke.ts"],
     {
-      env: { ...process.env, SMOKE_API_ORIGIN: "http://127.0.0.1:3002" },
+      env: { ...process.env, SMOKE_API_ORIGIN: serverOrigin },
       timeout: 40_000,
     },
   );
@@ -144,17 +138,15 @@ test("socket reconnect fetches changes missed while disconnected", async ({
 }) => {
   let disconnected = false;
   const sockets: import("@playwright/test").WebSocketRoute[] = [];
-  await page.routeWebSocket(
-    new RegExp(`127\\.0\\.0\\.1:${process.env.E2E_ENGINE_PORT || 6540}`),
-    (socket) => {
-      if (disconnected) {
-        void socket.close();
-        return;
-      }
-      socket.connectToServer();
-      sockets.push(socket);
-    },
-  );
+  // Browsers reach actors only through this origin's /rivet edge.
+  await page.routeWebSocket(/\/rivet\/gateway\//, (socket) => {
+    if (disconnected) {
+      void socket.close();
+      return;
+    }
+    socket.connectToServer();
+    sockets.push(socket);
+  });
   await page.goto("/");
   const key = `reconnect-${crypto.randomUUID()}`;
   const counter = page.getByRole("region", { name: "Svelte client" });

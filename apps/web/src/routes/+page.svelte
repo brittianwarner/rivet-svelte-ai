@@ -52,6 +52,7 @@
     </a>
     <nav aria-label="Main navigation">
       <a class="learn-nav" href="#how">How it works</a>
+      <a class="data-nav" href="/data">Data</a>
       <a class="start-nav" href="#start"
         >Get started <span aria-hidden="true">↘</span></a
       >

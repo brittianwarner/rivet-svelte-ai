@@ -1,0 +1,29 @@
+{
+  "name": "@example/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The one deployable: composes engine, actors, API, /rivet edge and web by ROLE.",
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "check": "tsc --noEmit",
+    "start": "bun src/main.ts",
+    "test:integration": "bun test --timeout 200000 tests"
+  },
+  "dependencies": {
+    "@example/actors": "workspace:*",
+    "@example/api": "workspace:*",
+    "@example/config": "workspace:*",
+    "@example/entities": "workspace:*",
+    "@example/rivet-edge": "workspace:*",
+    "@example/rivet-engine": "workspace:*",
+    "@example/web": "workspace:*",
+    "@example/wire": "workspace:*",
+    "elysia": "^1.4.32",
+    "rivetkit": "3.1.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}

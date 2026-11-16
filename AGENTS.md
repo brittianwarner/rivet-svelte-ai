@@ -12,27 +12,34 @@ This is a community-built Rivet Actors + SvelteKit starter and workspace Svelte 
 
 ## Repository map
 
-| Location                                           | Responsibility                                                           |
-| -------------------------------------------------- | ------------------------------------------------------------------------ |
-| `apps/api/src/actors/`                             | Counter, session, and optional chat actors; server-owned rules and state |
-| `apps/api/src/actors.ts`                           | Actor registry and local engine setup                                    |
-| `apps/api/src/app.ts`                              | Hono routes, validation, and HTTP boundaries                             |
-| `apps/api/src/env.ts`, `auth.ts`, `model.ts`       | Configuration, demo connection checks, and provider selection            |
-| `apps/web/src/routes/`                             | SSR page, layout, and API proxy                                          |
-| `apps/web/src/lib/view-models/`                    | Browser connection ownership, actions, and reconnect snapshots           |
-| `apps/web/src/lib/components/`                     | Svelte presentation and accessible controls                              |
-| `apps/web/src/lib/visuals/`                        | Displayed Svelte code examples                                           |
-| `packages/wire/`                                   | Browser-safe shared contracts, validation patterns, and limits           |
-| `packages/rivetkit-svelte/`                        | Reusable adapter, public API, and lifecycle tests                        |
-| `tests/e2e/`, `tests/fixtures/`, `apps/api/tests/` | Browser acceptance, local provider fixture, and real-engine integration  |
+Turborepo workspace. `apps/` are deployables; `packages/` are services and libraries. Each server-side service is its own package; `apps/server` composes them into one process and `ROLE` picks which ones run (see `servicesFor` in `packages/config`).
+
+| Location                          | Responsibility                                                                         |
+| --------------------------------- | -------------------------------------------------------------------------------------- |
+| `apps/server/`                    | The one deployable: composes the services by `ROLE`; boot and drain; integration tests |
+| `apps/web/`                       | SvelteKit app; built into a handler the server mounts                                  |
+| `packages/actors/`                | Counter, session, chat actors and the registry; server-owned rules and data            |
+| `packages/entities/`              | User/organization/project/export actors, principals, access, `commit`, outbox          |
+| `packages/api/`                   | Elysia routes as plugins; dependencies injected, no environment reads                  |
+| `packages/rivet-engine/`          | Engine node from `S3_*`, namespace bootstrap                                           |
+| `packages/rivet-edge/`            | The `/rivet` relay and scoped engine tokens; admin routes denied                       |
+| `packages/config/`                | Environment, `ROLE` presets, structured logging                                        |
+| `packages/wire/`                  | Browser-safe shared contracts, validation patterns, and limits                         |
+| `packages/rivetkit-svelte/`       | Reusable Svelte adapter, public API, and lifecycle tests                               |
+| `packages/sveltekit-adapter-bun/` | Vendored SvelteKit adapter for Bun (excluded from Prettier)                            |
+| `apps/web/src/lib/view-models/`   | Browser connection ownership, actions, and reconnect snapshots                         |
+| `apps/web/src/lib/components/`    | Svelte presentation and accessible controls                                            |
+| `tests/e2e/`, `tests/fixtures/`   | Browser acceptance and the local provider fixture                                      |
+
+Package boundaries are enforced by `turbo boundaries` (part of `bun run validate`) through the `tags` in each package's `turbo.json`: `browser` packages (`wire`, `rivetkit-svelte`) may not depend on `server`, `actors` or `config` packages; `apps/web` may not depend on `server` packages and imports `@example/actors` for types only. New server code goes in the package that owns the concern, or a new package wired into `apps/server`; never into `apps/web`.
 
 ## Run and verify
 
-Run commands from the repository root. Use Node 26 and the Bun version pinned in `package.json` (currently 1.4.4). Bun manages the workspace; Node runs the API and native engine. Do not introduce another lockfile.
+Run commands from the repository root. Use Bun 1.4.4 or newer (`engines` in `package.json`). Bun manages the workspace and runs the server, engine launcher and tests; Node is not used. Do not introduce another lockfile.
 
 ```sh
 bun install --frozen-lockfile
-bun run dev                         # Web :5173; API :3001; default engine :6440
+bun run dev                         # Vite :5173; Bun server :3001 (/api, /rivet); engine :6440
 bun run check                       # TypeScript and Svelte diagnostics
 bun run test                        # API and adapter unit tests
 bun run build                       # Adapter and production web build
@@ -40,25 +47,28 @@ bun run validate                    # check + test + build
 bun run format:check
 bunx playwright install chromium    # Once per environment
 bun run test:e2e:production          # Build + browser suites, including fake AI
-bun run test:restart                # Isolated API/runner restart acceptance
+bun run test:integration            # Real server + isolated engine, incl. restart and chat fixture
 ```
 
 - For docs-only edits, check formatting, paths, and command accuracy; application tests are unnecessary unless behavior also changes.
 - For code changes, run relevant checks and behavior tests. Add tests for changed contracts, races, cleanup, or recovery behavior rather than mirroring implementation details.
 - For UI changes, test the production browser flow and inspect actual desktop and narrow mobile rendering, including empty, pending, failed, and full states where affected. A screenshot or HTTP 200 alone is not end-to-end evidence.
-- For actor lifecycle or persistence changes, exercise a real isolated engine and the relevant restart test. Distinguish API/runner restart from full engine restart; read `docs/local-engine-recovery.md` and current test output before claiming recovery guarantees.
+- For actor lifecycle or persistence changes, run `bun run test:integration` (real isolated engine, server restart). Distinguish a server restart from rotating engine nodes; for deploy behavior, rehearse with `deploy/rehearse-deploy.sh` and read `docs/deployment.md` before claiming recovery guarantees.
 - Before a PR, follow `CONTRIBUTING.md`; `.github/workflows/ci.yml` is the CI contract. Report checks actually run, failures, and unverified behavior.
-- Browser suites use web :5174, API :3002, and engine :6540–6542 by default. Run them sequentially. If another engine occupies those ports, use a free consecutive range, for example `E2E_ENGINE_PORT=6560 bun run test:e2e:production`. Do not stop an unrelated process to free a port. Restart-test ports are documented in `docs/local-engine-recovery.md`.
+- Browser suites use web :5174, API :3002, and engine :6540–6542 by default. Run them sequentially. If another engine occupies those ports, use a free consecutive range, for example `E2E_ENGINE_PORT=6560 bun run test:e2e:production`. Do not stop an unrelated process to free a port. Integration tests use engines :6560/:6580/:6600 and servers :3010/:3030/:3050–3051.
 - Use the local provider fixture for automated AI tests. Do not send paid model requests just to validate changes. Keep credentials out of logs, screenshots, browser bundles, and commits.
 
 ## Rivet and shared contracts
 
 - Give independent entities their own keyed actors. Keep business rules on the server and validate action/HTTP input at runtime, even when TypeScript callers are typed.
-- Persist meaningful data in bounded `c.state`, or choose KV/SQLite for larger datasets. Use ephemeral variables only for disposable runtime resources. Bound histories, registries, queues, and retry metadata.
-- Reserve capacity before awaiting external work when concurrent actions can race. Define retry and idempotency behavior; actor state persistence does not make an external request or model stream a durable workflow.
+- Persist data in the actor's SQLite database (`db` + `migrations()`). RivetKit 3.x deprecates `state`/`createState`, `c.kv`, queues, `connState`, `saveState` and `preventSleep`; do not add them. Never edit a shipped migration; add a new version. Use `c.vars` only for disposable runtime resources (sessions, timers, presence). Bound every table that grows and page reads of it.
+- Write entity changes through `commit` (`packages/entities/src/store.ts`): checks inside the callback, never an await on another actor or `fetch` inside a transaction. Tell other actors through the outbox (`enqueue` in the transaction, `kickOutbox` after); handlers must be idempotent. Use `get`, not `getOrCreate`, for keys a caller can name.
+- Reserve capacity before awaiting external work when concurrent actions can race. Define retry and idempotency behavior. Use a workflow (`run: workflow(...)`, see `project-export.ts`) for multi-step work that must resume after a crash; actor persistence alone does not make an external request or model stream durable.
+- `docs/recipes.md` maps each pattern to its code and test. Update it when you add or move one.
 - Keep session membership separate from counter state and connection status. Disconnect releases a local socket; removal updates the session registry; neither destroys the counter. Preserve Undo, cross-tab updates, intentionally empty sessions, and stable actor identity when changing these flows.
 - Subscribe before fetching snapshots, reconcile stale/out-of-order responses, and release listeners and connections on teardown. Keep reconnect behavior covered by tests.
 - Put shared DTOs and limits in `packages/wire`. Import the API registry into browser code with `import type`; never import server runtime modules or secrets into the web app.
+- Entity actors use the hooks in `packages/entities/src/access.ts`: `authenticate` in `onBeforeConnect`, `trackSession`/`forgetSession` for `c.vars`, `caller`/`writer`/`requireSystem` in every action, and `publishTo` for events. Browsers open entities with `noCreate`; only the user actor and a new organization claim create. Never trust conn state or a raw id; never refuse in the organization's `canSubscribe` (it loops reconnects); never close sockets with an `auth.*` reason (the client stops reconnecting). See `docs/architecture.md#access-control`.
 - Anonymous session IDs and `ACTOR_TOKEN` are demo conveniences, not user authentication or authorization. Consult `docs/deployment.md` before changing hosted access boundaries.
 
 ## Svelte and the playground
@@ -76,7 +86,8 @@ bun run test:restart                # Isolated API/runner restart acceptance
 
 - Infrastructure lives in `.railway/railway.ts` using the official `railway/iac` SDK. Read `.railway/README.md` and `docs/deployment.md` before changing deployment behavior. Do not add legacy `railway.json` or `railway.toml` files.
 - Confirm the linked project and environment with `railway status --json`, then review `bun run railway:plan`. Use a pinned plan for apply. Preserve existing resources and secrets; never automate destructive confirmation flags or log decrypted variables.
-- Web and API builds use the workspace root and separate Dockerfiles. Keep `.env`, local engine data, and build artifacts out of image contexts. The public web proxy reaches the API privately; only the web and Rivet gateway have public domains.
+- One root `Dockerfile` builds the single image (engine node + actors + API + web on :8080; `ROLE` selects all/app/engine). Keep `.env`, local engine data, and build artifacts out of the image context. Only port 8080 gets a public domain; never expose api_peer 6421, Guard 6420 or metrics.
+- Deploys rotate engine nodes. Keep overlap ≥120 s and drain ≥660 s in `.railway/railway.ts`; shorter windows lost quorum permanently in rehearsal. `S3_ENDPOINT` must be https.
 - Validate hosted changes with `bun run test:deployment <web-origin>`. It writes its own acceptance counter and uses no paid AI. Test persistence against the same actor before/after a restart; process health alone is insufficient.
 
 ## Adapter and tooling boundaries

@@ -1,4 +1,4 @@
-import type { registry } from "@example/api/actors";
+import type { AppRegistry } from "@example/actors";
 import {
   COUNTER_NAME_PATTERN,
   SESSION_ACTOR_LIMIT,
@@ -12,7 +12,7 @@ import { actorSocketOptions } from "../actor-socket.js";
 import { getRivet } from "../rivet.js";
 import { CounterViewModel } from "./counter-view-model.svelte.js";
 
-type SessionActor = ReactiveActorHandle<typeof registry, "session">;
+type SessionActor = ReactiveActorHandle<AppRegistry, "session">;
 export interface SessionCounter {
   key: string;
   label: string;

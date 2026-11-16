@@ -1,11 +1,11 @@
-import type { registry } from "@example/api/actors";
+import type { AppRegistry } from "@example/actors";
 import { COUNTER_NAME_PATTERN } from "@example/wire";
 import { getActionError, type ReactiveActorHandle } from "@rivetkit/svelte";
 import { untrack } from "svelte";
 import { actorSocketOptions } from "../actor-socket.js";
 import { getRivet } from "../rivet.js";
 
-type CounterActor = ReactiveActorHandle<typeof registry, "counter">;
+type CounterActor = ReactiveActorHandle<AppRegistry, "counter">;
 
 /**
  * Owns the counter actor socket and the Hono increment call.

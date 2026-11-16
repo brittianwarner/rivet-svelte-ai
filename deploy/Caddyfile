@@ -1,0 +1,9 @@
+# Local stand-in for Railway's edge: round-robin across replicas, WebSockets included.
+:8080 {
+	reverse_proxy app1:8080 app2:8080 app3:8080 app4:8080 app5:8080 app6:8080 {
+		lb_policy round_robin
+		health_uri /api/health/actors
+		health_interval 2s
+		fail_duration 5s
+	}
+}

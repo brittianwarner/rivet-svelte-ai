@@ -1,6 +1,6 @@
 # Contributing
 
-Use Node 26 and Bun 1.4.4. Install from the root with `bun install --frozen-lockfile`.
+Use Bun 1.4.4 or newer. Install from the root with `bun install --frozen-lockfile`.
 
 ## Working with coding agents
 
@@ -21,7 +21,7 @@ bunx playwright install chromium
 bun run test:e2e:production
 ```
 
-Keep actor rules in `apps/api`, browser projections in view models, and presentation in components. Use Svelte 5 runes, typed events, runtime input validation, compound keys, and bounded state. Never import runtime server code into the web app. Document lifecycle and retry semantics for new background work.
+Keep actor rules in `packages/actors` (or a new package for a new domain), browser projections in view models, and presentation in components. Use Svelte 5 runes, typed events, runtime input validation, compound keys, and bounded state. Never import runtime server code into the web app. Document lifecycle and retry semantics for new background work.
 
 Add behavior tests for changed contracts or lifecycle guarantees. Use local engines and fake providers for repeatable tests; do not require paid credentials in CI. Browser tests have their own ports. The main suite blanks provider keys; the AI suite uses a test-process-only fetch transport with a dummy key and exercises the optional chat actor through the real provider SDK and socket client without paid calls. Do not run two browser suites concurrently on those same ports.
 

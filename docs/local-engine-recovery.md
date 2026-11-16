@@ -1,5 +1,7 @@
 # Local engine recovery investigation
 
+> **Historical (RivetKit/Engine 3.0.1, Node runtime).** The `test:restart` script and `apps/api/tests/restart.ts` it describes were removed when the starter moved to one Bun server on Engine 3.1.1. Current evidence: `bun run test:integration` (server restart against a running engine) and the replica-rotation rehearsal in [deployment](deployment.md#rehearsed-locally). Full single-engine restart on 3.1.1 has not been re-qualified.
+
 This is a reproducible diagnostic report for upstream follow-up. It describes local testing only; no deployed environment was tested.
 
 ## Symptoms

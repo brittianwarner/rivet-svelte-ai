@@ -1,0 +1,28 @@
+{
+  "name": "@example/actors",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The app's Rivet actors and registry. The browser imports its types only.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^4.0.112",
+    "@example/config": "workspace:*",
+    "@example/entities": "workspace:*",
+    "@example/wire": "workspace:*",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
+    "ai": "^7.0.163",
+    "cbor-x": "1.6.9",
+    "rivetkit": "3.1.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}

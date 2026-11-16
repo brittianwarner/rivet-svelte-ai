@@ -5,21 +5,22 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev --port 5173 --strictPort",
-    "build": "vite build",
+    "build": "bun --bun vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsgo --tsconfig ./tsconfig.json",
-    "start": "node build/index.js"
+    "start": "bun ../server/src/main.ts"
   },
   "dependencies": {
-    "@example/api": "workspace:*",
+    "@example/actors": "workspace:*",
+    "@example/entities": "workspace:*",
     "@example/wire": "workspace:*",
     "@rivetkit/svelte": "workspace:*",
-    "@sveltejs/adapter-node": "^6.0.1",
     "@sveltejs/kit": "^3.1.1",
-    "rivetkit": "3.0.1",
+    "rivetkit": "3.1.1",
     "svelte": "^5.57.3"
   },
   "devDependencies": {
+    "@example/sveltekit-adapter-bun": "workspace:*",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/node": "^26.6.6",
     "@typescript/native": "npm:typescript@^7.0.2",
