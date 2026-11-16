@@ -35,8 +35,6 @@ export interface ClientConfig {
   rivetEndpoint: string;
   rivetNamespace?: string;
   actorToken: string | null;
-  /** Obtain a renewable, scoped Engine credential from the backend. */
-  authenticatedEngine?: boolean;
 }
 
 /** Which model the API will call. `none` means neither key is set. */

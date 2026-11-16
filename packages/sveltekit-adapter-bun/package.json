@@ -1,0 +1,28 @@
+{
+  "name": "@example/sveltekit-adapter-bun",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bun-native SvelteKit adapter. Emits build/handler.js so one Bun.serve can mount the web app beside the API and the Rivet gateway.",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./index.d.ts", "import": "./index.js" },
+    "./ambient": { "types": "./ambient.d.ts", "import": "./ambient.js" },
+    "./package.json": "./package.json"
+  },
+  "types": "./index.d.ts",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test tests"
+  },
+  "peerDependencies": {
+    "@sveltejs/kit": "^3.0.0"
+  },
+  "devDependencies": {
+    "@sveltejs/kit": "^3.1.1",
+    "@types/bun": "^1.4.4",
+    "svelte": "^5.57.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  },
+  "engines": { "bun": ">=1.4.0" }
+}

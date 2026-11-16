@@ -1,0 +1,22 @@
+{
+  "name": "@example/rivet-edge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The /rivet relay: browser gateway traffic in, engine admin routes out.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "@example/config": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2",
+    "rivetkit": "3.1.1"
+  }
+}

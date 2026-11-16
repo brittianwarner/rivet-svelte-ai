@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "moduleResolution": "bundler",
+    "strict": true,
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "types": ["bun"]
+  },
+  "include": [
+    "ambient.d.ts",
+    "index.d.ts",
+    "index.js",
+    "runtime-shims.d.ts",
+    "files/**/*.js",
+
+    "tests/**/*.ts"
+  ],
+  "exclude": ["fixtures/**/build-*", "node_modules"]
+}

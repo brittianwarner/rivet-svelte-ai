@@ -1,0 +1,9 @@
+# Local stand-in for Railway's edge in front of the front tier.
+:8080 {
+	reverse_proxy front1:8080 front2:8080 {
+		lb_policy round_robin
+		health_uri /api/health/actors
+		health_interval 2s
+		fail_duration 5s
+	}
+}

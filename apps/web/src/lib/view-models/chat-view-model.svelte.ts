@@ -1,4 +1,4 @@
-import type { registry } from "@example/api/actors";
+import type { AppRegistry } from "@example/actors";
 import {
   CHAT_STATE_LIMIT,
   MAX_CHAT_MESSAGE_LENGTH,
@@ -13,7 +13,7 @@ import { getRivet } from "../rivet.js";
 
 const STORAGE_KEY = "rivet-svelte-ai.chatId";
 
-type ChatActor = ReactiveActorHandle<typeof registry, "chat">;
+type ChatActor = ReactiveActorHandle<AppRegistry, "chat">;
 type MessagePatch = (messages: ChatMessage[]) => ChatMessage[];
 
 function readChatId(): string {

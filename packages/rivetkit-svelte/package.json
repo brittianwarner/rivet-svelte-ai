@@ -35,7 +35,7 @@
     "bench": "vitest bench --run --environment jsdom src/lib/__bench__/*.bench.ts"
   },
   "peerDependencies": {
-    "rivetkit": "^3.0.1",
+    "rivetkit": "^3.1.1",
     "svelte": "^5.57.3"
   },
   "dependencies": {
@@ -43,7 +43,7 @@
     "fast-deep-equal": "^3.1.3"
   },
   "devDependencies": {
-    "rivetkit": "3.0.1",
+    "rivetkit": "3.1.1",
     "@sveltejs/package": "^3.0.2",
     "jsdom": "^30.1.3",
     "svelte": "^5.57.3",

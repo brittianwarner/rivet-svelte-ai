@@ -9,11 +9,12 @@ export default defineConfig({
   testMatch: "ai.spec.ts",
   outputDir: "test-results/ai",
   webServer: servers.map((server) =>
-    server.command.includes("@example/api")
+    server.command === "bun apps/server/src/main.ts"
       ? {
           ...server,
+          // The fixture answers openrouter.ai in-process: no paid model calls.
           command:
-            "node --import ./tests/fixtures/provider.mjs --experimental-strip-types apps/api/src/index.ts",
+            "bun --preload ./tests/fixtures/provider.mjs apps/server/src/main.ts",
           env: { ...server.env, OPENROUTER_API_KEY: "local-test-key" },
         }
       : server,

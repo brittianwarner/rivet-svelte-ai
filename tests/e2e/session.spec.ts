@@ -2,6 +2,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
 
+// The site origin: scripts reach /api and /rivet exactly as the browser does.
+const serverOrigin = "http://127.0.0.1:5174";
+
 test("simultaneous first visits use the same browser session", async ({
   page,
   context,
@@ -135,10 +138,10 @@ test("session actor retains the registry across reloads and tabs while visitors 
 
 test("real session actions are idempotent, bounded, and restore their actors", async () => {
   const { stdout } = await promisify(execFile)(
-    process.execPath,
-    ["apps/api/tests/session-integration.ts"],
+    "bun",
+    ["apps/server/tests/session-integration.ts"],
     {
-      env: { ...process.env, SMOKE_API_ORIGIN: "http://127.0.0.1:3002" },
+      env: { ...process.env, SMOKE_API_ORIGIN: serverOrigin },
       timeout: 50_000,
     },
   );

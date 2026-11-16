@@ -1,23 +1,42 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "envMode": "loose",
+  "globalDependencies": ["tsconfig*.json", ".env.example"],
   "tasks": {
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
     "dev": {
       "cache": false,
       "persistent": true
     },
     "check": {
-      "dependsOn": ["^check"],
-      "cache": false
+      "dependsOn": ["transit"]
     },
     "test": {
-      "dependsOn": ["^test"],
-      "cache": false
+      "dependsOn": ["transit"]
     },
     "build": {
       "env": ["WEB_ORIGIN"],
       "dependsOn": ["^build"],
-      "outputs": ["build/**", "dist/**", ".svelte-kit/**"]
+      "outputs": ["build/**", "dist/**"]
+    },
+    "test:integration": {
+      "cache": false
+    }
+  },
+  "boundaries": {
+    "tags": {
+      "browser": {
+        "dependencies": {
+          "deny": ["server", "actors", "config"]
+        }
+      },
+      "web": {
+        "dependencies": {
+          "deny": ["server"]
+        }
+      }
     }
   }
 }
