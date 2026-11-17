@@ -9,13 +9,15 @@
  * joins as a new worker and balancing re-replicates onto it.
  *
  * The supervisor owns three things the engine cannot do by itself:
- *   1. advertise this container's own private IPv6 (replicas share one DNS
- *      name, and the engine config has no interpolation);
+ *   1. advertise this container's own private address (replicas share one
+ *      DNS name, and the engine config has no interpolation);
  *   2. map the plain S3_* variables onto the engine's config keys;
  *   3. stop in order: the caller drains actors first, then the engine gets
  *      SIGTERM and up to ENGINE_STOP_TIMEOUT_MS to hand off its partitions.
  */
 import type { Subprocess } from "bun";
+import { lookup } from "node:dns/promises";
+import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { log } from "@example/config";
 
 /** Engine 3.x stop: storage handoff (up to 8 min) plus teardown. */
@@ -33,6 +35,72 @@ export function privateIpv6(ifInet6: string): string | null {
     return hex.match(/.{4}/g)!.join(":").toLowerCase();
   }
   return null;
+}
+
+type Interfaces = Record<string, NetworkInterfaceInfo[] | undefined>;
+
+const PEER_PORT = 6421;
+
+function isUniqueLocal(address: string): boolean {
+  return /^f[cd][0-9a-f]{2}:/i.test(address);
+}
+
+function isPrivateIpv4(address: string): boolean {
+  const [a = 0, b = 0] = address.split(".").map(Number);
+  return (
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}
+
+function external(interfaces: Interfaces): NetworkInterfaceInfo[] {
+  return Object.values(interfaces)
+    .flatMap((list) => list ?? [])
+    .filter((info) => !info.internal);
+}
+
+export interface PeerAddressInput {
+  interfaces: Interfaces;
+  /** /proc/net/if_inet6, when the kernel exposes it. */
+  ifInet6: string | null;
+  /** Addresses the private service name resolves to (Railway: every replica). */
+  privateNames: string[];
+}
+
+/**
+ * The `host:6421` other nodes dial. Every replica shares one private DNS
+ * name, so each must find its own address:
+ *
+ *   1. a unique-local IPv6 (fc00::/7) on an interface (Railway's private network);
+ *   2. the same from /proc/net/if_inet6, for kernels that hide it from getifaddrs;
+ *   3. a private IPv4 on an interface, only when the private name resolves to it.
+ *      Containers also have IPv4 addresses that are not on the private network.
+ */
+export function peerAddress(input: PeerAddressInput): string | null {
+  const addresses = external(input.interfaces);
+  const ula = addresses.find(
+    (info) => info.family === "IPv6" && isUniqueLocal(info.address),
+  );
+  if (ula) return `[${ula.address.toLowerCase()}]:${PEER_PORT}`;
+  const fromProc = input.ifInet6 ? privateIpv6(input.ifInet6) : null;
+  if (fromProc) return `[${fromProc}]:${PEER_PORT}`;
+  const ipv4 = addresses.find(
+    (info) =>
+      info.family === "IPv4" &&
+      isPrivateIpv4(info.address) &&
+      input.privateNames.includes(info.address),
+  );
+  return ipv4 ? `${ipv4.address}:${PEER_PORT}` : null;
+}
+
+/** Interface names, families and addresses, for the log when none fits. */
+export function describeInterfaces(interfaces: Interfaces): string[] {
+  return external(interfaces).map(
+    (info) =>
+      `${info.family} ${info.address}/${info.cidr?.split("/")[1] ?? "?"}`,
+  );
 }
 
 export interface S3Settings {
@@ -149,6 +217,26 @@ export function engineEnv(input: EngineEnvInput): Record<string, string> {
   return env;
 }
 
+async function readIfInet6(): Promise<string | null> {
+  const file = Bun.file("/proc/net/if_inet6");
+  return (await file.exists()) ? file.text() : null;
+}
+
+/** Every address of the private service name; empty off Railway or on failure. */
+async function resolvePrivateName(name: string | undefined): Promise<string[]> {
+  if (!name?.trim()) return [];
+  try {
+    const records = await lookup(name.trim(), { all: true });
+    return records.map((record) => record.address);
+  } catch (error) {
+    log.warn("rivet engine: private name did not resolve", {
+      name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
 export interface EngineHandle {
   /** Local Guard URL for the runner and the gateway proxy. */
   endpoint: string;
@@ -179,12 +267,20 @@ export async function startEngineNode(
 
   let advertise = base.RIVET__API_PEER__ADVERTISE_ADDRESS?.trim() || null;
   if (!advertise) {
-    const file = Bun.file("/proc/net/if_inet6");
-    const ip6 = (await file.exists()) ? privateIpv6(await file.text()) : null;
-    advertise = ip6 ? `[${ip6}]:6421` : null;
-  }
-  if (!advertise) {
-    log.warn("rivet engine: no private IPv6 found; running as a single node");
+    const interfaces = networkInterfaces();
+    advertise = peerAddress({
+      interfaces,
+      ifInet6: await readIfInet6(),
+      privateNames: await resolvePrivateName(base.RAILWAY_PRIVATE_DOMAIN),
+    });
+    if (!advertise) {
+      log.warn(
+        "rivet engine: no private address found; running as a single node",
+        {
+          interfaces: describeInterfaces(interfaces),
+        },
+      );
+    }
   }
 
   const env = engineEnv({

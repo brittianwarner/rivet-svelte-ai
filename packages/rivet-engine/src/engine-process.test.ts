@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   engineEnv,
+  peerAddress,
   privateIpv6,
   s3Endpoint,
   s3FromEnv,
 } from "./engine-process.ts";
+import type { NetworkInterfaceInfo } from "node:os";
 
 const S3 = {
   S3_BUCKET: "stash-1a2b",
@@ -26,6 +28,71 @@ describe("privateIpv6", () => {
   test("returns null without one", () => {
     expect(
       privateIpv6("fe800000000000000000000000000001 02 40 20 80 eth0"),
+    ).toBeNull();
+  });
+});
+
+describe("peerAddress", () => {
+  const info = (
+    address: string,
+    family: "IPv4" | "IPv6",
+    internal = false,
+  ): NetworkInterfaceInfo =>
+    ({
+      address,
+      family,
+      internal,
+      netmask: "",
+      mac: "00:00:00:00:00:00",
+      cidr: `${address}/${family === "IPv6" ? 64 : 24}`,
+      ...(family === "IPv6" ? { scopeid: 0 } : {}),
+    }) as NetworkInterfaceInfo;
+  const none = { ifInet6: null, privateNames: [] };
+
+  test("prefers a unique-local IPv6 on an interface", () => {
+    const interfaces = {
+      lo: [info("127.0.0.1", "IPv4", true), info("::1", "IPv6", true)],
+      eth0: [
+        info("10.1.2.3", "IPv4"),
+        info("fe80::1", "IPv6"),
+        info("FD12:3456::42", "IPv6"),
+      ],
+    };
+    expect(peerAddress({ interfaces, ...none })).toBe("[fd12:3456::42]:6421");
+  });
+
+  test("falls back to /proc/net/if_inet6", () => {
+    expect(
+      peerAddress({
+        interfaces: { eth0: [info("fe80::1", "IPv6")] },
+        ifInet6: "fd12345600000000abcd000000000042 02 40 00 80 eth0",
+        privateNames: [],
+      }),
+    ).toBe("[fd12:3456:0000:0000:abcd:0000:0000:0042]:6421");
+  });
+
+  test("uses a private IPv4 only when the private name resolves to it", () => {
+    const interfaces = {
+      eth0: [info("10.0.0.5", "IPv4")],
+      eth1: [info("10.250.0.9", "IPv4")],
+    };
+    expect(peerAddress({ interfaces, ...none })).toBeNull();
+    expect(
+      peerAddress({
+        interfaces,
+        ifInet6: null,
+        privateNames: ["10.250.0.7", "10.250.0.9"],
+      }),
+    ).toBe("10.250.0.9:6421");
+  });
+
+  test("ignores loopback and public addresses", () => {
+    const interfaces = {
+      lo: [info("fd00::1", "IPv6", true)],
+      eth0: [info("203.0.113.7", "IPv4"), info("2001:db8::7", "IPv6")],
+    };
+    expect(
+      peerAddress({ interfaces, ifInet6: null, privateNames: ["203.0.113.7"] }),
     ).toBeNull();
   });
 });
