@@ -30,7 +30,7 @@ One Bun server serves the web app, `/api` and `/rivet` on one origin. `/rivet` r
 
 ## Scale by independent keys
 
-Choose the smallest useful consistency boundary: one room, one conversation, one document, or one job. Multiple API/runner processes can serve many actors; adding processes does not make one hot actor infinitely parallel. Avoid cross-actor fan-out on every token. For aggregate views, build an index or projection rather than scanning every actor.
+Choose the smallest useful consistency boundary: one room, one conversation, one document, or one job. Multiple api replicas (each an actor runner) can serve many actors; adding processes does not make one hot actor infinitely parallel. Avoid cross-actor fan-out on every token. For aggregate views, build an index or projection rather than scanning every actor.
 
 Use a verified organization/user identity when deriving keys. Never accept a raw user ID as proof; see [access control](#access-control). Cross-actor calls can introduce circular inferred types, so give those action returns explicit types.
 

@@ -7,8 +7,8 @@ import type { AppRegistry } from "@example/actors";
 import { pause, startIsolatedEngine } from "./engine.ts";
 
 /**
- * A real engine plus the real server, as one replica sees them in production
- * (ROLE=app pointed at an engine). Dedicated ports and a temporary data
+ * A real engine plus the real server processes, as production runs them
+ * (ROLE=app, or ROLE=api behind ROLE=web, pointed at an engine). Dedicated ports and a temporary data
  * directory: never touches the developer's local engine or database.
  */
 export interface Harness {
@@ -31,11 +31,12 @@ export interface HarnessOptions {
   preload?: string;
   /**
    * One server process per role, all on the same engine. The default `["app"]`
-   * is one replica of the single container with its engine elsewhere;
-   * `["runner", "front"]` is the split tier layout. The role that serves the
-   * front gets `port`; the others get the ports after it.
+   * is actors, API and web in one process with the engine elsewhere;
+   * `["api", "web"]` is the production split, web forwarding to api. The
+   * public role (web, else the first) gets `port`; the others get the ports
+   * after it.
    */
-  roles?: ("app" | "runner" | "front")[];
+  roles?: ("app" | "api" | "web")[];
 }
 
 /** A client that reaches actors the way a browser does: through `<origin>/rivet`. */
@@ -72,11 +73,11 @@ export async function startHarness(
   engine.child.stderr?.on("data", (data) => capture("engine", data));
 
   const roles = opts.roles ?? ["app"];
-  const portFor = (index: number) => {
-    const frontIndex = roles.findIndex((r) => r !== "runner");
-    if (index === frontIndex) return port;
-    return port + 1 + index;
-  };
+  const publicIndex = Math.max(roles.indexOf("web"), 0);
+  const portFor = (index: number) =>
+    index === publicIndex ? port : port + 1 + index;
+  const apiIndex = roles.findIndex((r) => r !== "web");
+  const apiOrigin = `http://127.0.0.1:${portFor(apiIndex)}`;
   let servers: ReturnType<typeof Bun.spawn>[] = [];
 
   const spawnRole = async (role: string, rolePort: number) => {
@@ -106,6 +107,8 @@ export async function startHarness(
           ENTITY_SECRET: HARNESS_ENTITY_SECRET,
           // No web build in tests: the server answers /api and /rivet only.
           WEB_HANDLER: "none",
+          FILES_DIR: join(directory, "files"),
+          API_URL: apiOrigin,
           ...opts.env,
         },
         stdout: "pipe",
@@ -120,7 +123,7 @@ export async function startHarness(
         throw new Error(`${role} exited (${server.exitCode}): ${output}`);
       try {
         const ready = await fetch(
-          `http://127.0.0.1:${rolePort}/api/health/actors`,
+          `http://127.0.0.1:${rolePort}${role === "web" ? "/healthz" : "/api/health/actors"}`,
           { signal: AbortSignal.timeout(1000) },
         );
         if (ready.ok) return;
@@ -130,12 +133,10 @@ export async function startHarness(
     throw new Error(`${role} startup timed out: ${output}`);
   };
   const startServer = async () => {
-    // Runners first, so the front never reports ready with nothing to serve.
+    // The api first, so web never reports ready with nothing behind it.
     const order = roles
       .map((role, index) => ({ role, index }))
-      .sort(
-        (a, b) => Number(a.role !== "runner") - Number(b.role !== "runner"),
-      );
+      .sort((a, b) => Number(a.role === "web") - Number(b.role === "web"));
     for (const { role, index } of order) await spawnRole(role, portFor(index));
   };
   const stopServer = async () => {

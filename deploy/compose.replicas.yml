@@ -1,68 +1,131 @@
-# Three replicas of the one image on a shared bucket, behind a round-robin edge.
-# Local only: MinIO stands in for the S3 bucket, Caddy for Railway's edge.
+# The production layout on one machine: a 3-node engine cluster, 2 api
+# replicas, 2 web replicas, behind a round-robin edge on :8080. MinIO stands
+# in for Railway's buckets (one for the engine, one for the api's files),
+# Caddy for Railway's edge, and Docker's DNS for Railway's private network:
+# `engine` and `api` resolve to every replica, as *.railway.internal does.
 #
-#   docker compose -f deploy/compose.replicas.yml up --build -d
+#   docker compose -f deploy/compose.replicas.yml up --build -d --wait
 #   bun run test:deployment http://localhost:8080
-#   docker compose -f deploy/compose.replicas.yml down -v
+#   docker compose -f deploy/compose.replicas.yml --profile next --profile all down -v
 #
-# Rehearse a deploy the way Railway runs one (new replicas start, overlap,
-# then the old ones drain): see deploy/rehearse-deploy.sh.
+# Rehearse a deploy the way Railway runs one (the next release starts beside
+# the current one, they overlap, then the old one drains): deploy/rehearse-deploy.sh.
 #
-# The same image split into tiers (3 engines, 2 runners, 2 fronts) on :8081:
+# The single-service topology (ROLE=all: every replica is an engine node plus
+# the app) on :8081:
 #
-#   docker compose -f deploy/compose.replicas.yml --profile tiers up -d \
-#     engine1 engine2 engine3 runner1 runner2 front1 front2 edge-tiers
+#   docker compose -f deploy/compose.replicas.yml --profile all up -d --wait app1 app2 app3 edge-all
 #   bun run test:deployment http://localhost:8081
 #
 # The credentials below are local placeholders. Never reuse them.
 name: rivet-svelte-ai-replicas
 
-x-app: &app
-  build: { context: .., platforms: [linux/amd64] }
-  image: rivet-svelte-ai:local
-  platform: linux/amd64
+# Railway runs amd64. On an arm64 machine, a native build is far faster:
+#   APP_IMAGE=rivet-svelte-ai:arm64 APP_PLATFORM=linux/arm64
+x-image: &image
+  build: { context: .., platforms: ["${APP_PLATFORM:-linux/amd64}"] }
+  image: ${APP_IMAGE:-rivet-svelte-ai:local}
+  platform: ${APP_PLATFORM:-linux/amd64}
+
+x-secrets: &secrets
+  RIVET_TOKEN: local-only-admin-token-0123456789abcdef0123456789abcdef
+  ENTITY_SECRET: local-only-entity-secret-0123456789abcdef0123456789
+
+# The engine's bucket. Virtual-hosted https: the endpoint becomes https://rivet.s3.local.
+x-engine-bucket: &engine-bucket
+  S3_BUCKET: rivet
+  S3_PREFIX: engine/
+  S3_ENDPOINT: https://s3.local
+  S3_REGION: us-east-1
+  S3_ACCESS_KEY_ID: local-minio
+  S3_SECRET_ACCESS_KEY: local-minio-secret
+  # Trust the local CA only. Production uses the system store.
+  SSL_CERT_FILE: /s3-ca/caddy/pki/authorities/local/root.crt
+
+# The api's bucket: exports and other app files. Never the engine's.
+x-files-bucket: &files-bucket
+  FILES_BUCKET: files
+  FILES_ENDPOINT: https://s3.local
+  FILES_REGION: us-east-1
+  FILES_ACCESS_KEY_ID: local-minio
+  FILES_SECRET_ACCESS_KEY: local-minio-secret
+  SSL_CERT_FILE: /s3-ca/caddy/pki/authorities/local/root.crt
+
+x-needs-s3: &needs-s3
   depends_on:
-    bucket: { condition: service_completed_successfully }
+    buckets: { condition: service_completed_successfully }
     s3: { condition: service_healthy }
-  # Railway's drain window. The engine hands its partitions off on SIGTERM;
-  # cutting this short is how a deploy loses quorum.
-  stop_grace_period: 660s
   volumes: ["s3-ca:/s3-ca:ro"]
-  environment: &app-env
-    ROLE: all
-    PUBLIC_ORIGIN: http://localhost:8080
-    RIVET_TOKEN: local-only-admin-token-0123456789abcdef0123456789abcdef
-    ENTITY_SECRET: local-only-entity-secret-0123456789abcdef0123456789
-    S3_BUCKET: rivet
-    # Virtual-hosted, https: the endpoint becomes https://rivet.s3.local.
-    S3_ENDPOINT: https://s3.local
-    S3_REGION: us-east-1
-    S3_ACCESS_KEY_ID: local-minio
-    S3_SECRET_ACCESS_KEY: local-minio-secret
-    # Trust the local CA only. Production uses the system store.
-    SSL_CERT_FILE: /s3-ca/caddy/pki/authorities/local/root.crt
 
 x-engine: &engine
-  <<: *app
-  profiles: [tiers]
+  <<: [*image, *needs-s3]
+  # Railway's drain window. A node hands its partitions off on SIGTERM;
+  # cutting this short is how a deploy loses quorum.
+  stop_grace_period: 660s
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "bun",
+        "-e",
+        "process.exit((await fetch('http://127.0.0.1:6420/health')).ok?0:1)",
+      ]
+    interval: 2s
+    start_period: 120s
   environment: &engine-env
-    <<: *app-env
+    <<: [*secrets, *engine-bucket]
     ROLE: engine
     PORT: "6420"
 
-# Runners and fronts hold no state: no bucket, no peer address.
-x-tier: &tier
-  image: rivet-svelte-ai:local
-  platform: linux/amd64
-  profiles: [tiers]
-  depends_on: [engine1, engine2, engine3]
+x-api: &api
+  <<: [*image, *needs-s3]
   stop_grace_period: 120s
-  networks: [replicas]
-  environment: &tier-env
-    PUBLIC_ORIGIN: http://localhost:8081
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "bun",
+        "-e",
+        "process.exit((await fetch('http://127.0.0.1:8080/api/health/actors')).ok?0:1)",
+      ]
+    interval: 2s
+    start_period: 180s
+  environment:
+    <<: [*secrets, *files-bucket]
+    ROLE: api
+    PUBLIC_ORIGIN: http://localhost:8080
     RIVET_ENDPOINT: http://engine:6420
-    RIVET_TOKEN: local-only-admin-token-0123456789abcdef0123456789abcdef
-    ENTITY_SECRET: local-only-entity-secret-0123456789abcdef0123456789
+  networks: { replicas: { aliases: [api] } }
+
+# Web holds no secrets and no bucket: pages, and a link to the api.
+x-web: &web
+  <<: *image
+  stop_grace_period: 30s
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "bun",
+        "-e",
+        "process.exit((await fetch('http://127.0.0.1:8080/healthz')).ok?0:1)",
+      ]
+    interval: 2s
+    start_period: 60s
+  environment:
+    ROLE: web
+    API_URL: http://api:8080
+  networks: [replicas]
+
+x-all: &all
+  <<: [*image, *needs-s3]
+  profiles: [all]
+  stop_grace_period: 660s
+  environment: &all-env
+    <<: [*secrets, *engine-bucket, *files-bucket]
+    ROLE: all
+    S3_PREFIX: all/
+    FILES_PREFIX: all/
+    PUBLIC_ORIGIN: http://localhost:8081
 
 services:
   minio:
@@ -79,12 +142,12 @@ services:
       interval: 2s
       retries: 30
 
-  bucket:
+  buckets:
     image: minio/mc:latest
     depends_on: { minio: { condition: service_healthy } }
     entrypoint: >
       sh -c "mc alias set local http://minio:9000 local-minio local-minio-secret &&
-             mc mb --ignore-existing local/rivet"
+             mc mb --ignore-existing local/rivet local/files"
     networks: [replicas]
 
   s3:
@@ -103,46 +166,9 @@ services:
       retries: 30
     networks:
       replicas:
-        aliases: [s3.local, rivet.s3.local]
+        aliases: [s3.local, rivet.s3.local, files.s3.local]
 
-  app1:
-    <<: *app
-    environment:
-      { <<: *app-env, RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.11:6421" }
-    networks: { replicas: { ipv4_address: 172.28.0.11 } }
-  app2:
-    <<: *app
-    environment:
-      { <<: *app-env, RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.12:6421" }
-    networks: { replicas: { ipv4_address: 172.28.0.12 } }
-  app3:
-    <<: *app
-    environment:
-      { <<: *app-env, RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.13:6421" }
-    networks: { replicas: { ipv4_address: 172.28.0.13 } }
-
-  # The next release: same image, new disks, new addresses.
-  app4:
-    <<: *app
-    profiles: [next]
-    environment:
-      { <<: *app-env, RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.14:6421" }
-    networks: { replicas: { ipv4_address: 172.28.0.14 } }
-  app5:
-    <<: *app
-    profiles: [next]
-    environment:
-      { <<: *app-env, RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.15:6421" }
-    networks: { replicas: { ipv4_address: 172.28.0.15 } }
-  app6:
-    <<: *app
-    profiles: [next]
-    environment:
-      { <<: *app-env, RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.16:6421" }
-    networks: { replicas: { ipv4_address: 172.28.0.16 } }
-
-  # --- Tiers: the same image, one service per role ---------------------------
-  # Every engine answers to the name `engine`, like a Railway private domain.
+  # --- engine: the cluster. Every node answers to `engine`. -----------------
   engine1:
     <<: *engine
     environment:
@@ -150,8 +176,7 @@ services:
         <<: *engine-env,
         RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.21:6421",
       }
-    networks:
-      replicas: { ipv4_address: 172.28.0.21, aliases: [engine] }
+    networks: { replicas: { ipv4_address: 172.28.0.21, aliases: [engine] } }
   engine2:
     <<: *engine
     environment:
@@ -159,8 +184,7 @@ services:
         <<: *engine-env,
         RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.22:6421",
       }
-    networks:
-      replicas: { ipv4_address: 172.28.0.22, aliases: [engine] }
+    networks: { replicas: { ipv4_address: 172.28.0.22, aliases: [engine] } }
   engine3:
     <<: *engine
     environment:
@@ -168,24 +192,77 @@ services:
         <<: *engine-env,
         RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.23:6421",
       }
-    networks:
-      replicas: { ipv4_address: 172.28.0.23, aliases: [engine] }
-  runner1: { <<: *tier, environment: { <<: *tier-env, ROLE: runner } }
-  runner2: { <<: *tier, environment: { <<: *tier-env, ROLE: runner } }
-  front1: { <<: *tier, environment: { <<: *tier-env, ROLE: front } }
-  front2: { <<: *tier, environment: { <<: *tier-env, ROLE: front } }
-  edge-tiers:
-    image: caddy:2-alpine
-    profiles: [tiers]
-    ports: ["8081:8080"]
-    volumes: ["./Caddyfile.tiers:/etc/caddy/Caddyfile:ro"]
-    depends_on: [front1, front2]
-    networks: [replicas]
+    networks: { replicas: { ipv4_address: 172.28.0.23, aliases: [engine] } }
+
+  # --- api: actors, /api and /rivet. ----------------------------------------
+  api1: { <<: *api, depends_on: [engine1, engine2, engine3] }
+  api2: { <<: *api, depends_on: [engine1, engine2, engine3] }
+
+  # --- web: pages; forwards /api and /rivet to `api`. -----------------------
+  web1: { <<: *web, depends_on: [api1, api2] }
+  web2: { <<: *web, depends_on: [api1, api2] }
 
   edge:
     image: caddy:2-alpine
     ports: ["8080:8080"]
     volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro"]
+    depends_on: [web1, web2]
+    networks: [replicas]
+
+  # --- The next release: same image, new disks, new addresses. --------------
+  engine4:
+    <<: *engine
+    profiles: [next]
+    environment:
+      {
+        <<: *engine-env,
+        RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.24:6421",
+      }
+    networks: { replicas: { ipv4_address: 172.28.0.24, aliases: [engine] } }
+  engine5:
+    <<: *engine
+    profiles: [next]
+    environment:
+      {
+        <<: *engine-env,
+        RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.25:6421",
+      }
+    networks: { replicas: { ipv4_address: 172.28.0.25, aliases: [engine] } }
+  engine6:
+    <<: *engine
+    profiles: [next]
+    environment:
+      {
+        <<: *engine-env,
+        RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.26:6421",
+      }
+    networks: { replicas: { ipv4_address: 172.28.0.26, aliases: [engine] } }
+  api3: { <<: *api, profiles: [next] }
+  api4: { <<: *api, profiles: [next] }
+  web3: { <<: *web, profiles: [next] }
+  web4: { <<: *web, profiles: [next] }
+
+  # --- ROLE=all: one service, every replica an engine node plus the app. ----
+  app1:
+    <<: *all
+    environment:
+      { <<: *all-env, RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.31:6421" }
+    networks: { replicas: { ipv4_address: 172.28.0.31 } }
+  app2:
+    <<: *all
+    environment:
+      { <<: *all-env, RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.32:6421" }
+    networks: { replicas: { ipv4_address: 172.28.0.32 } }
+  app3:
+    <<: *all
+    environment:
+      { <<: *all-env, RIVET__API_PEER__ADVERTISE_ADDRESS: "172.28.0.33:6421" }
+    networks: { replicas: { ipv4_address: 172.28.0.33 } }
+  edge-all:
+    image: caddy:2-alpine
+    profiles: [all]
+    ports: ["8081:8080"]
+    volumes: ["./Caddyfile.all:/etc/caddy/Caddyfile:ro"]
     depends_on: [app1, app2, app3]
     networks: [replicas]
 

@@ -1,4 +1,4 @@
-/** A Rivet engine node: S3_* in, a running cluster member out. */
+/** Rivet engine nodes: S3_* in, a cluster member out; or a local single node. */
 export {
   engineEnv,
   peerAddress,
@@ -15,3 +15,8 @@ export {
   type BootstrapOptions,
   type BootstrapResult,
 } from "./bootstrap.ts";
+export {
+  localEngineEnv,
+  startLocalEngine,
+  type LocalEngineOptions,
+} from "./local-engine.ts";

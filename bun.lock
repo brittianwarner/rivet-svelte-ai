@@ -61,6 +61,7 @@
         "@ai-sdk/google": "^4.0.112",
         "@example/config": "workspace:*",
         "@example/entities": "workspace:*",
+        "@example/files": "workspace:*",
         "@example/wire": "workspace:*",
         "@openrouter/ai-sdk-provider": "^3.1.0",
         "ai": "^7.0.163",
@@ -97,6 +98,9 @@
     "packages/entities": {
       "name": "@example/entities",
       "version": "0.0.0",
+      "dependencies": {
+        "@example/files": "workspace:*",
+      },
       "devDependencies": {
         "@types/bun": "^1.4.4",
         "rivetkit": "3.1.1",
@@ -104,6 +108,17 @@
       },
       "peerDependencies": {
         "rivetkit": "3.1.1",
+      },
+    },
+    "packages/files": {
+      "name": "@example/files",
+      "version": "0.0.0",
+      "dependencies": {
+        "@example/config": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.4.4",
+        "typescript": "^7.0.2",
       },
     },
     "packages/rivet-edge": {
@@ -123,6 +138,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@example/config": "workspace:*",
+        "@rivetkit/engine-cli": "3.1.1",
       },
       "devDependencies": {
         "@types/bun": "^1.4.4",
@@ -220,6 +236,8 @@
     "@example/config": ["@example/config@workspace:packages/config"],
 
     "@example/entities": ["@example/entities@workspace:packages/entities"],
+
+    "@example/files": ["@example/files@workspace:packages/files"],
 
     "@example/rivet-edge": ["@example/rivet-edge@workspace:packages/rivet-edge"],
 

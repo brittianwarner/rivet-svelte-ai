@@ -6,17 +6,17 @@ Paths are from the repository root. `server.test.ts` is `apps/server/tests/serve
 
 ## Store data
 
-| Need                                    | Code                                                                       | Proof                                                                         |
-| --------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| A table per actor, created on first use | `db({ onMigrate: migrations(...) })` in `packages/actors/src/counter.ts`   | `counter.test.ts`                                                             |
-| A schema with several tables            | `projectDb` in `packages/entities/src/actors/project.ts`                   | `server.test.ts` › entities                                                   |
-| Carry pre-3.0 `c.state` into SQLite     | `packages/actors/src/legacy-state.ts`, each actor's version-1 migration    | `counter.test.ts`, `session.test.ts`, `chat.test.ts` › "the first migration…" |
-| A change that cannot interleave         | One `UPDATE … RETURNING` (counter `increment`, project `toggleTask`)       | `counter.test.ts` › "concurrent increments…"                                  |
-| A change across several rows            | `commit()` in `packages/entities/src/store.ts`                             | `packages/entities/src/store.test.ts`                                         |
-| An audit trail with paged history       | `audit` table, `readAudit` / `readHistory` in `store.ts`; `getHistory`     | `store.test.ts` › "history pages backward…"                                   |
-| A growing list, paged                   | `comments` table and `listComments` in `project.ts`                        | `server.test.ts` › "tasks carry paged comments…"                              |
-| A file stored in the actor              | `files` table (BLOB) in `packages/entities/src/actors/project-export.ts`   | `server.test.ts` › "a CSV export runs as a workflow…"                         |
-| Bounded data                            | `LIMITS` in `packages/entities/src/contracts.ts`, `assertRoom` in input.ts | `server.test.ts` › entities                                                   |
+| Need                                    | Code                                                                                                                          | Proof                                                                         |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| A table per actor, created on first use | `db({ onMigrate: migrations(...) })` in `packages/actors/src/counter.ts`                                                      | `counter.test.ts`                                                             |
+| A schema with several tables            | `projectDb` in `packages/entities/src/actors/project.ts`                                                                      | `server.test.ts` › entities                                                   |
+| Carry pre-3.0 `c.state` into SQLite     | `packages/actors/src/legacy-state.ts`, each actor's version-1 migration                                                       | `counter.test.ts`, `session.test.ts`, `chat.test.ts` › "the first migration…" |
+| A change that cannot interleave         | One `UPDATE … RETURNING` (counter `increment`, project `toggleTask`)                                                          | `counter.test.ts` › "concurrent increments…"                                  |
+| A change across several rows            | `commit()` in `packages/entities/src/store.ts`                                                                                | `packages/entities/src/store.test.ts`                                         |
+| An audit trail with paged history       | `audit` table, `readAudit` / `readHistory` in `store.ts`; `getHistory`                                                        | `store.test.ts` › "history pages backward…"                                   |
+| A growing list, paged                   | `comments` table and `listComments` in `project.ts`                                                                           | `server.test.ts` › "tasks carry paged comments…"                              |
+| A file kept outside the actor           | `entityFiles().put/get/delete` in `packages/entities/src/actors/project-export.ts`; the record stays in the actor's `job` row | `server.test.ts` › "a CSV export runs as a workflow…"; `split.test.ts`        |
+| Bounded data                            | `LIMITS` in `packages/entities/src/contracts.ts`, `assertRoom` in input.ts                                                    | `server.test.ts` › entities                                                   |
 
 Rules:
 
@@ -73,6 +73,7 @@ Rules:
 Rules:
 
 - `onRequest` runs after `onBeforeConnect`, so the same access check covers HTTP and sockets.
+- Stream a stored file straight from the store with its size; never buffer it in the actor. Delete the object before the record, so a crash leaves a record to retry, never an orphan nobody owns.
 - Send `content-disposition: attachment`, `cache-control: private, no-store` and `x-content-type-options: nosniff` with user data.
 
 ## Users, access, and live views
@@ -124,7 +125,7 @@ Rules:
 
 These come up in real apps, but this repository does not show them yet:
 
-- **Uploads and large files.** The export stores a small file in SQLite. For user uploads or large files, store objects in S3 with presigned URLs and keep only metadata in the actor.
+- **Browser uploads.** The export writes its file through the api's file store (`@example/files`: the `files` bucket in production, `.rivet/files` locally). For large browser uploads, add presigned PUT URLs to that bucket so bytes skip the api, and keep only the record in the actor.
 - **An ORM.** Queries are plain SQL through `c.db.execute`. RivetKit also supports Drizzle; this repository does not use it.
 - **Raw WebSockets.** Everything uses actions and events. `onWebSocket` is available for custom protocols.
 - **Deleting an organization or an account.** Project deletion shows the pattern: remove the index entry and enqueue the destroy in one transaction.

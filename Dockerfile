@@ -3,11 +3,13 @@
 # One image for every service. `apps/server` composes the packages; ROLE picks
 # which of them a container runs:
 #
-#   ROLE=all (default)  engine node + actors + web/api/edge. Needs only S3_*.
-#   ROLE=app            actors + web/api/edge; engine elsewhere (RIVET_ENDPOINT).
-#   ROLE=engine         engine node only.
-#   ROLE=runner         actor runner only.
-#   ROLE=front          web + /api + /rivet only; stateless, scale freely.
+#   ROLE=web            pages; forwards /api and /rivet to API_URL. No secrets.
+#   ROLE=api            actors + /api + /rivet; engine at RIVET_ENDPOINT, files in FILES_*.
+#   ROLE=engine         engine node only; state in S3_*.
+#   ROLE=app            actors + api + web in one process; engine elsewhere.
+#   ROLE=all (default)  engine node + everything else. Needs S3_* and FILES_*.
+#
+# Production runs web, api and engine as three services (.railway/railway.ts).
 #
 # See docs/deployment.md before scaling or upgrading.
 #
@@ -73,7 +75,7 @@ ENV NODE_ENV=production \
 USER app
 EXPOSE 8080
 # Bun is PID 1 and handles SIGTERM itself: stop taking traffic, drain the
-# runner, then stop the engine node. Give it the platform's full drain window.
+# runner, then stop the engine node if this role runs one. Give it the platform's full drain window.
 STOPSIGNAL SIGTERM
 ENTRYPOINT []
 CMD ["bun", "apps/server/src/main.ts"]
