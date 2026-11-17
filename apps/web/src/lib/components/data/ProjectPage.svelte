@@ -6,7 +6,9 @@
     ProjectViewModel,
     ago,
     clock,
+    entityDeps,
     getConnections,
+    getOrganization,
     getUser,
     until,
   } from "#lib/data/index.js";
@@ -16,6 +18,7 @@
   import EntityState from "./EntityState.svelte";
   import InlineRename from "./InlineRename.svelte";
   import RoleBadge from "./RoleBadge.svelte";
+  import Skeleton from "./Skeleton.svelte";
   import TaskThread from "./TaskThread.svelte";
   import { saveFile } from "./save-file.js";
 
@@ -23,8 +26,10 @@
 
   // The route keys this component on both ids.
   // svelte-ignore state_referenced_locally
-  const project = new ProjectViewModel(orgId, projectId);
+  const project = new ProjectViewModel(orgId, projectId, entityDeps());
   const user = getUser();
+  // The org layout keeps its socket open, and its index names this project.
+  const org = getOrganization();
   const connections = getConnections();
 
   $effect(() => project.connect());
@@ -37,6 +42,12 @@
     user.organizations.find((item) => item.orgId === project.orgId) ?? null,
   );
   const writable = $derived(can(link?.role, "project.write"));
+  const loading = $derived(project.view === "loading");
+  const name = $derived(
+    project.snapshot?.name ??
+      org.projects.find((item) => item.projectId === project.projectId)?.name ??
+      null,
+  );
   const removed = $derived(user.lostAccess(project.orgId));
   const orgHref = $derived(
     resolve("/data/orgs/[orgId]", { orgId: project.orgId }),
@@ -88,7 +99,7 @@
     <h2>You no longer have access to this project.</h2>
     <a class="inline-link" href={resolve("/data")}>Back to overview</a>
   </div>
-{:else if project.view !== "ready" || !project.snapshot}
+{:else if !loading && (project.view !== "ready" || !project.snapshot)}
   <EntityState
     view={project.view}
     noun="project"
@@ -97,7 +108,7 @@
   />
 {:else}
   {@const snapshot = project.snapshot}
-  <header class="page-header">
+  <header class="page-header" aria-busy={loading}>
     <nav class="crumbs" aria-label="Breadcrumb">
       <a href={resolve("/data")}>Overview</a><span aria-hidden="true">/</span>
       <a href={orgHref}>{link?.name ?? project.orgId}</a><span
@@ -105,18 +116,24 @@
       >
       <a href={`${orgHref}?tab=projects`}>Projects</a>
     </nav>
-    <InlineRename
-      value={snapshot.name}
-      label="Project name"
-      editable={writable && project.connected}
-      busy={project.isBusy("rename")}
-      onsave={(name: string) => project.rename(name)}
-    />
+    {#if name}
+      <InlineRename
+        value={name}
+        label="Project name"
+        editable={!!snapshot && writable && project.connected}
+        busy={project.looksBusy("rename")}
+        onsave={(next: string) => project.rename(next)}
+      />
+    {:else}
+      <div class="title-skeleton">
+        <Skeleton width="12ch" height="calc(clamp(28px, 4vw, 40px) * 1.1)" />
+      </div>
+    {/if}
     <div class="header-row">
       <ActorMeta
         actorKey={project.key}
-        revision={snapshot.revision}
-        updatedAt={snapshot.updatedAt}
+        revision={snapshot?.revision}
+        updatedAt={snapshot?.updatedAt}
         connStatus={project.connStatus}
       />
       {#if link}
@@ -143,11 +160,17 @@
       <div class="block-heading">
         <h2 id="tasks-title">Tasks</h2>
         <span class="tally"
-          >{project.openCount} open · {project.tasks.length - project.openCount} done</span
+          >{snapshot
+            ? `${project.openCount} open · ${project.tasks.length - project.openCount} done`
+            : ""}</span
         >
       </div>
-      {#if writable}
-        <form class="inline-form" onsubmit={addTask}>
+      {#if !link}
+        <div class="toolbar">
+          <Skeleton width="100%" height="48px" />
+        </div>
+      {:else if writable}
+        <form class="inline-form toolbar" onsubmit={addTask}>
           <label class="sr-only" for="task-title">New task</label>
           <input
             id="task-title"
@@ -158,14 +181,24 @@
           />
           <button
             type="submit"
-            disabled={!title.trim() || project.isBusy("add-task")}
-            >{project.isBusy("add-task") ? "Adding…" : "Add"}</button
+            disabled={!title.trim() || project.looksBusy("add-task")}
+            >{project.looksBusy("add-task") ? "Adding…" : "Add"}</button
           >
         </form>
       {:else}
-        <p class="hint">Viewers can read tasks. Members can change them.</p>
+        <p class="hint toolbar">
+          Viewers can read tasks. Members can change them.
+        </p>
       {/if}
-      {#if project.tasks.length === 0}
+      {#if !snapshot}
+        <ul class="tasks" aria-hidden="true">
+          {#each [0, 1, 2] as index (index)}
+            <li>
+              <div class="task"><Skeleton width="60%" height="22px" /></div>
+            </li>
+          {/each}
+        </ul>
+      {:else if project.tasks.length === 0}
         <p class="empty">No tasks yet.</p>
       {:else}
         <ul class="tasks">
@@ -205,7 +238,7 @@
                       class="text-button"
                       aria-label={`Remove ${task.title}`}
                       disabled={!project.connected ||
-                        project.isBusy(`task:${task.taskId}`)}
+                        project.looksBusy(`task:${task.taskId}`)}
                       onclick={() => void project.removeTask(task)}
                       >Remove</button
                     >
@@ -232,12 +265,14 @@
             class="secondary"
             disabled={!project.connected ||
               project.exporting ||
-              project.isBusy("export")}
+              project.looksBusy("export")}
             onclick={() => void project.startExport()}
             >{project.exporting ? "Exporting…" : "Export CSV"}</button
           >
         </div>
-        {#if project.exports.length === 0}
+        {#if !snapshot}
+          <Skeleton width="80%" height="18px" />
+        {:else if project.exports.length === 0}
           <p class="hint">
             Export the task list as a CSV file. Files are kept for a limited
             time.
@@ -258,9 +293,9 @@
                   <button
                     type="button"
                     class="text-button"
-                    disabled={project.isBusy(`download:${link.exportId}`)}
+                    disabled={project.looksBusy(`download:${link.exportId}`)}
                     onclick={() => void download(link)}
-                    >{project.isBusy(`download:${link.exportId}`)
+                    >{project.looksBusy(`download:${link.exportId}`)
                       ? "Downloading…"
                       : "Download"}</button
                   >
@@ -275,18 +310,41 @@
         <div class="block-heading">
           <h2 id="activity-title">Activity</h2>
         </div>
-        <ActivityList
-          entries={project.activity}
-          more={project.hasOlderActivity}
-          loading={project.isBusy("history")}
-          onmore={() => void project.showOlderActivity()}
-        />
+        {#if !snapshot}
+          <div class="skeleton-lines" aria-hidden="true">
+            {#each [0, 1, 2] as index (index)}
+              <Skeleton width="100%" height="41px" />
+            {/each}
+          </div>
+        {:else}
+          <ActivityList
+            entries={project.activity}
+            more={project.hasOlderActivity}
+            loading={project.looksBusy("history")}
+            onmore={() => void project.showOlderActivity()}
+          />
+        {/if}
       </section>
     </div>
   </div>
 {/if}
 
 <style>
+  .title-skeleton {
+    display: flex;
+  }
+  /* The row above the task list keeps one height whatever it holds. */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    /* The form's controls are 47.6px; one height for form, note and skeleton. */
+    min-height: 48px;
+    margin: 0;
+  }
+  .skeleton-lines {
+    display: grid;
+    gap: 1px;
+  }
   .page-header {
     display: grid;
     gap: 12px;
@@ -303,6 +361,7 @@
     color: var(--red);
   }
   .header-row {
+    min-height: 24px;
     display: flex;
     flex-wrap: wrap;
     gap: 8px 24px;

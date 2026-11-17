@@ -90,6 +90,7 @@ Rules:
 | Server-only actions           | `requireSystem(c)`; system tokens from `asSystem()` in `peers.ts`           | `server.test.ts` › "system is reserved…"                       |
 | Presence (who is here now)    | `c.vars.viewers`, `watch`, `presence` event, `onDisconnect` in `project.ts` | `server.test.ts`, `data.spec.ts`                               |
 | Delete an entity              | `deleteProject` → outbox → `project.destroy()` → `c.destroy()`              | `server.test.ts` › "deleting a project…", `data.spec.ts`       |
+| Stay awake between visits     | `ENTITY_OPTIONS` (`sleepTimeout: 5 min`) in `access.ts`                     | Configuration only                                             |
 
 Rules:
 
@@ -100,16 +101,24 @@ Rules:
 
 ## The browser
 
-| Need                                      | Code                                                                            | Proof                                         |
-| ----------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------- |
-| One live entity: socket, snapshot, errors | `EntityViewModel` in `apps/web/src/lib/data/entity-view-model.svelte.ts`        | `data.spec.ts`                                |
-| Out-of-order replies and events           | `apply()` keeps the highest `revision`                                          | `data.spec.ts`                                |
-| Optimistic toggles                        | `#intended` in `ProjectViewModel`                                               | `data.spec.ts`                                |
-| Extra events (comments, presence)         | Override `listen(actor)`                                                        | `data.spec.ts` › "comments, …"                |
-| Paged threads that catch up on reconnect  | `ProjectViewModel` threads, `#loadNewest`                                       | `data.spec.ts` › "comments, …"                |
-| "Show older" activity                     | `activity`, `hasOlderActivity`, `showOlderActivity` on `EntityViewModel`        | `store.test.ts`                               |
-| Never create actors from the browser      | `noCreate` by default; only the user actor and a new organization pass `create` | `data.spec.ts` › "a guessed organization id…" |
-| A one-shot call without a socket          | `once()` on `EntityViewModel`; `getRivetClient()` for `fetch`                   | `data.spec.ts`                                |
+| Need                                      | Code                                                                                             | Proof                                         |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| One live entity: socket, snapshot, errors | `EntityViewModel` in `apps/web/src/lib/data/entity-view-model.svelte.ts`                         | `data.spec.ts`                                |
+| Out-of-order replies and events           | `apply()` keeps the highest `revision`                                                           | `data.spec.ts`                                |
+| Optimistic toggles                        | `#intended` in `ProjectViewModel`                                                                | `data.spec.ts`                                |
+| Extra events (comments, presence)         | Override `listen(actor)`                                                                         | `data.spec.ts` › "comments, …"                |
+| Paged threads that catch up on reconnect  | `ProjectViewModel` threads, `#loadNewest`                                                        | `data.spec.ts` › "comments, …"                |
+| "Show older" activity                     | `activity`, `hasOlderActivity`, `showOlderActivity` on `EntityViewModel`                         | `store.test.ts`                               |
+| Never create actors from the browser      | `noCreate` by default; only the user actor and a new organization pass `create`                  | `data.spec.ts` › "a guessed organization id…" |
+| A one-shot call without a socket          | `once()` on `EntityViewModel`; `getRivetClient()` for `fetch`                                    | `data.spec.ts`                                |
+| Dependencies read once, during setup      | `entityDeps()` in a component; pass `deps` to every view-model constructor                       | `svelte-check`                                |
+| One socket per organization, kept warm    | `OrganizationCache` (`hold`, `warm`, 60 s grace) + `routes/data/orgs/[orgId]/+layout.svelte`     | `data.spec.ts`                                |
+| Open a page before the click lands        | `organizations.warm(orgId)` on `pointerenter` / `focus` in `DataShell.svelte`                    | `data.spec.ts`                                |
+| Busy state that does not flicker          | `isBusy(label)` for logic, `looksBusy(label)` for display (300 ms lag)                           | `data.spec.ts`                                |
+| A pending look for any boolean            | `lagging(() => flag)` in `apps/web/src/lib/lagging.svelte.ts`                                    | `actor-lab.spec.ts`                           |
+| Rapid clicks that never drop              | Queued `increment` / `incrementViaHttp` in `counter-view-model.svelte.ts`                        | `actor-lab.spec.ts`                           |
+| Loading that does not move the page       | `Skeleton.svelte` sized like the content; fixed toolbar rows; known header fields from the index | `data.spec.ts`                                |
+| Restore sign-in without a sign-in flash   | `preloadPrincipal(fetch)` in `routes/data/+layout.ts`                                            | `data.spec.ts`                                |
 
 ## Not included
 

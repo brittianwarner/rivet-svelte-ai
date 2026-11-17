@@ -15,6 +15,6 @@
 
 {#key data.config}
   <RivetProvider config={data.config}>
-    <DataApp>{@render children()}</DataApp>
+    <DataApp preload={data.principal}>{@render children()}</DataApp>
   </RivetProvider>
 {/key}

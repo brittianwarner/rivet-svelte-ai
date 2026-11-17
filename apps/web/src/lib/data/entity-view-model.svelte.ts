@@ -17,8 +17,8 @@ import {
 import { untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 import { actorSocketOptions } from "../actor-socket.js";
-import { getRivet } from "../rivet.js";
-import { getPrincipal } from "./principal.svelte.js";
+import { getRivet, getRivetClient, type RivetClient } from "../rivet.js";
+import { getPrincipal, type PrincipalViewModel } from "./principal.svelte.js";
 
 export type EntityName = "user" | "organization" | "project";
 export type UserActor = ReactiveActorHandle<AppRegistry, "user">;
@@ -91,9 +91,32 @@ function isSnapshot(value: unknown): value is { revision: number } {
   );
 }
 
+/**
+ * What every entity view model needs from its surroundings. Read once with
+ * `entityDeps()` during component setup, so a view model can also be built
+ * later, outside it (the organization cache does).
+ */
+export interface EntityDeps {
+  rivet: ReturnType<typeof getRivet>;
+  client: RivetClient;
+  principal: PrincipalViewModel;
+  socket: ReturnType<typeof actorSocketOptions>;
+}
+
+/** Read the contexts entity view models use. Call during component setup. */
+export function entityDeps(): EntityDeps {
+  return {
+    rivet: getRivet(),
+    client: getRivetClient(),
+    principal: getPrincipal(),
+    socket: actorSocketOptions(),
+  };
+}
+
 export interface EntityOptions<N extends EntityName> {
   name: N;
   key: string[];
+  deps: EntityDeps;
   /**
    * Create the actor if no actor has this key. Only for actors a person
    * claims by name, like their own user. Everything else is created by the
@@ -101,6 +124,9 @@ export interface EntityOptions<N extends EntityName> {
    */
   create?: boolean;
 }
+
+/** How long an action runs before it shows as pending. */
+const SLOW_MS = 300;
 
 /** Newest first, one entry per id. */
 function mergeActivity(...lists: AuditEntry[][]): AuditEntry[] {
@@ -118,22 +144,25 @@ function mergeActivity(...lists: AuditEntry[][]): AuditEntry[] {
  * - Tracks each running action by label, so unrelated buttons stay usable.
  * - Pages older activity on request, for entities that keep history.
  *
- * Construct during component setup (it owns an `$effect`), then call
- * `connect()` from an effect and return its cleanup.
+ * Construct inside an effect scope (component setup or `$effect.root`: it
+ * owns an `$effect`), then call `connect()` and keep its cleanup.
  */
 export class EntityViewModel<N extends EntityName> {
   snapshot = $state.raw<SnapshotOf<N> | null>(null);
   error = $state<string | null>(null);
   outcome = $state<"missing" | "denied" | null>(null);
   actor = $state.raw<EntityActor<N> | null>(null);
-  readonly busy = new SvelteSet<string>();
+  /** Labels of running actions. Guards re-entry the moment one starts. */
+  readonly #busy = new SvelteSet<string>();
+  /** The same labels, once they have run longer than `SLOW_MS`. */
+  readonly #slow = new SvelteSet<string>();
 
   readonly name: N;
   readonly key: string[];
-  protected readonly rivet = getRivet();
-  protected readonly principal = getPrincipal();
+  protected readonly rivet: EntityDeps["rivet"];
+  protected readonly principal: PrincipalViewModel;
   readonly #create: boolean;
-  #socket = actorSocketOptions();
+  readonly #socket: EntityDeps["socket"];
   #pull = 0;
   /** Entries older than the snapshot's, loaded with `showOlderActivity`. */
   #older = $state.raw<AuditEntry[]>([]);
@@ -144,6 +173,9 @@ export class EntityViewModel<N extends EntityName> {
     this.name = options.name;
     this.key = options.key;
     this.#create = options.create ?? false;
+    this.rivet = options.deps.rivet;
+    this.principal = options.deps.principal;
+    this.#socket = options.deps.socket;
     $effect(() => {
       const actor = this.actor;
       if (!actor?.isConnected) return;
@@ -234,7 +266,33 @@ export class EntityViewModel<N extends EntityName> {
   }
 
   isBusy(label: string): boolean {
-    return this.busy.has(label);
+    return this.#busy.has(label);
+  }
+
+  /**
+   * Whether to show this action as pending. Only after `SLOW_MS`, so a reply
+   * within a round trip never flashes "Saving…" or a disabled button.
+   * Re-entry is still refused at once (`isBusy`).
+   */
+  looksBusy(label: string): boolean {
+    return this.#slow.has(label);
+  }
+
+  /**
+   * Mark an action as running. Returns its `done`, or null when one with
+   * this label is already running.
+   */
+  protected begin(label: string): (() => void) | null {
+    if (this.#busy.has(label)) return null;
+    this.#busy.add(label);
+    const timer = setTimeout(() => {
+      if (this.#busy.has(label)) this.#slow.add(label);
+    }, SLOW_MS);
+    return () => {
+      clearTimeout(timer);
+      this.#busy.delete(label);
+      this.#slow.delete(label);
+    };
   }
 
   /**
@@ -305,8 +363,9 @@ export class EntityViewModel<N extends EntityName> {
     call: (actor: EntityActor<N>) => Promise<T>,
   ): Promise<T | undefined> {
     const actor = this.actor;
-    if (!actor || this.busy.has(label)) return undefined;
-    this.busy.add(label);
+    if (!actor) return undefined;
+    const done = this.begin(label);
+    if (!done) return undefined;
     this.error = null;
     try {
       const result = await call(actor);
@@ -317,7 +376,7 @@ export class EntityViewModel<N extends EntityName> {
       if (this.actor === actor) this.error = describeError(error);
       return undefined;
     } finally {
-      this.busy.delete(label);
+      done();
     }
   }
 

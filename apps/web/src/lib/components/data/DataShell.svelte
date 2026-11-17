@@ -2,15 +2,22 @@
   import type { Snippet } from "svelte";
   import { page } from "$app/state";
   import { resolve } from "$app/paths";
-  import { getConnections, getPrincipal, getUser } from "#lib/data/index.js";
+  import {
+    getConnections,
+    getOrganizations,
+    getPrincipal,
+    getUser,
+  } from "#lib/data/index.js";
   import Avatar from "./Avatar.svelte";
   import RoleBadge from "./RoleBadge.svelte";
+  import Skeleton from "./Skeleton.svelte";
 
   let { children }: { children: Snippet } = $props();
 
   const principal = getPrincipal();
   const user = getUser();
   const connections = getConnections();
+  const organizations = getOrganizations();
   const health = connections.health;
 
   const me = $derived(principal.current!);
@@ -81,7 +88,11 @@
       </a>
       <p class="nav-heading">Organizations</p>
       {#if user.view === "loading"}
-        <p class="nav-note">Loading…</p>
+        <ul aria-hidden="true">
+          {#each [0, 1] as index (index)}
+            <li class="nav-item"><Skeleton width="60%" height="14px" /></li>
+          {/each}
+        </ul>
       {:else if user.organizations.length === 0}
         <p class="nav-note">None yet.</p>
       {:else}
@@ -92,6 +103,8 @@
                 class="nav-item"
                 href={resolve("/data/orgs/[orgId]", { orgId: link.orgId })}
                 aria-current={activeOrg === link.orgId ? "page" : undefined}
+                onpointerenter={() => organizations.warm(link.orgId)}
+                onfocus={() => organizations.warm(link.orgId)}
               >
                 <span class="org-name">{link.name}</span>
                 <RoleBadge role={link.role} />
@@ -113,7 +126,7 @@
         <button
           type="button"
           class="text-button"
-          disabled={!user.connected || user.isBusy("theme")}
+          disabled={!user.connected || user.looksBusy("theme")}
           onclick={() =>
             void user.setTheme(user.theme === "dark" ? "light" : "dark")}
         >

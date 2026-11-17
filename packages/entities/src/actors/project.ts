@@ -11,6 +11,7 @@ import {
   requireSystem,
   sessionPrincipal,
   trackSession,
+  ENTITY_OPTIONS,
   writer,
   type EntityContext,
   type EntityVars,
@@ -328,6 +329,7 @@ function kick(c: ProjectHost): void {
 // ---------------------------------------------------------------- actor
 
 export const project = actor({
+  options: ENTITY_OPTIONS,
   db: projectDb,
   createVars: (): ProjectVars => ({
     ...createEntityVars(),

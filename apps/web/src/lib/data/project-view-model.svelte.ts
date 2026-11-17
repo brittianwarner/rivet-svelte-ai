@@ -9,11 +9,11 @@ import {
   type Viewer,
 } from "@example/entities/contracts";
 import { SvelteMap } from "svelte/reactivity";
-import { getRivetClient } from "../rivet.js";
 import {
   EntityViewModel,
   describeError,
   type EntityActor,
+  type EntityDeps,
 } from "./entity-view-model.svelte.js";
 
 /** The loaded part of one task's comments, oldest first. */
@@ -57,10 +57,11 @@ export class ProjectViewModel extends EntityViewModel<"project"> {
   /** taskId → its loaded comments. Only threads someone opened. */
   readonly #threads = new SvelteMap<string, Thread>();
   #viewers = $state.raw<Viewer[]>([]);
-  readonly #client = getRivetClient();
+  readonly #client: EntityDeps["client"];
 
-  constructor(orgId: string, projectId: string) {
-    super({ name: "project", key: projectKey(orgId, projectId) });
+  constructor(orgId: string, projectId: string, deps: EntityDeps) {
+    super({ name: "project", key: projectKey(orgId, projectId), deps });
+    this.#client = deps.client;
     this.orgId = orgId;
     this.projectId = projectId;
   }
@@ -204,8 +205,8 @@ export class ProjectViewModel extends EntityViewModel<"project"> {
    */
   async download(link: ExportLink): Promise<DownloadedFile | null> {
     const label = `download:${link.exportId}`;
-    if (this.busy.has(label)) return null;
-    this.busy.add(label);
+    const done = this.begin(label);
+    if (!done) return null;
     this.error = null;
     try {
       const handle = this.#client.projectExport.get(
@@ -228,7 +229,7 @@ export class ProjectViewModel extends EntityViewModel<"project"> {
       this.error = describeError(error);
       return null;
     } finally {
-      this.busy.delete(label);
+      done();
     }
   }
 

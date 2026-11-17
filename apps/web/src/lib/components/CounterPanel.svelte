@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { CounterViewModel } from "#lib/view-models/counter-view-model.svelte.js";
+  import { lagging } from "#lib/lagging.svelte.js";
   let { counter }: { counter: CounterViewModel } = $props();
+  // The view model refuses a second request at once; the button only looks
+  // busy when the reply is slow, so a fast one changes nothing but the count.
+  const sending = lagging(() => counter.httpPending);
   let nameDraft = $state("demo");
   function applyName(event: SubmitEvent): void {
     event.preventDefault();
@@ -29,9 +33,10 @@
           onclick={() => void counter.increment()}>+ Increment</button
         ><button
           class="secondary"
-          disabled={!counter.connected || counter.httpPending}
+          disabled={!counter.connected || sending.current}
+          aria-busy={sending.current}
           onclick={() => void counter.incrementViaHttp()}
-          >{counter.httpPending ? "Sending…" : "+ Via HTTP"}</button
+          >{sending.current ? "Sending…" : "+ Via HTTP"}</button
         >
       </div>
       {#if counter.error}<p class="error" role="alert">{counter.error}</p>{/if}

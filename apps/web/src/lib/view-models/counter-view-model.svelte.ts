@@ -18,6 +18,7 @@ export class CounterViewModel {
   snapshotPending = $state(false);
   snapshotError = $state<string | null>(null);
   error = $state<string | null>(null);
+  /** True while any HTTP increment is queued or in flight. */
   httpPending = $state(false);
   actor = $state.raw<CounterActor | null>(null);
 
@@ -25,6 +26,9 @@ export class CounterViewModel {
   #socketOptions = actorSocketOptions();
   #unmount: (() => void) | null = null;
   #pullId = 0;
+  /** HTTP increments run one at a time, in click order. */
+  #http: Promise<void> = Promise.resolve();
+  #httpQueued = 0;
 
   constructor() {
     $effect(() => {
@@ -89,12 +93,23 @@ export class CounterViewModel {
     this.error = null;
   }
 
-  /** Same actor, reached through Hono instead of the browser socket. */
-  async incrementViaHttp(): Promise<void> {
-    if (this.httpPending) return;
+  /**
+   * Same actor, reached through Hono instead of the browser socket. Clicks
+   * queue rather than drop, so every one counts.
+   */
+  incrementViaHttp(): Promise<void> {
+    this.#httpQueued++;
+    this.httpPending = true;
+    const next = this.#http.then(() => this.#incrementViaHttp());
+    this.#http = next.finally(() => {
+      if (--this.#httpQueued === 0) this.httpPending = false;
+    });
+    return this.#http;
+  }
+
+  async #incrementViaHttp(): Promise<void> {
     const name = this.name;
     const actor = this.actor;
-    this.httpPending = true;
     this.error = null;
 
     try {
@@ -123,8 +138,6 @@ export class CounterViewModel {
         error instanceof Error
           ? error.message
           : "Couldn't increment through the API";
-    } finally {
-      this.httpPending = false;
     }
   }
 
