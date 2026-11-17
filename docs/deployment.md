@@ -70,7 +70,7 @@ A `runner` answers only `/api/health` and `/api/health/actors` on `PORT`; give i
 
 The engine's S3 client does not speak plain http. Given an `http://` endpoint it sends nothing and boot times out with "config operation timed out", so the server refuses an `http://` `S3_ENDPOINT` at startup. For a local MinIO, put a TLS proxy in front and trust its CA with `SSL_CERT_FILE`, as [`deploy/compose.replicas.yml`](../deploy/compose.replicas.yml) does.
 
-The advertise address for `api_peer` is detected from the container's private IPv6 (Railway). Elsewhere, set `RIVET__API_PEER__ADVERTISE_ADDRESS=<private ip>:6421` per replica.
+The advertise address for `api_peer` is detected at boot: a unique-local IPv6 on the container's interfaces (Railway's private network), or a private IPv4 that `RAILWAY_PRIVATE_DOMAIN` resolves to. If none fits, the log lists the interfaces it saw. Elsewhere, set `RIVET__API_PEER__ADVERTISE_ADDRESS=<private ip>:6421` per replica.
 
 ## Health
 

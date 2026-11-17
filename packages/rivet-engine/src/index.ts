@@ -1,6 +1,7 @@
 /** A Rivet engine node: S3_* in, a running cluster member out. */
 export {
   engineEnv,
+  peerAddress,
   privateIpv6,
   s3Endpoint,
   s3FromEnv,
