@@ -41,16 +41,19 @@ export default defineRailway((ctx) => {
   // Forks: your domain, or undefined to use a Railway domain.
   const domain =
     ctx.environment === "production" ? "svelteactors.dev" : undefined;
-  const region = "us-west2";
+  // US East (Virginia). Keep the bucket in the same region: the engine
+  // writes to it continuously.
+  const region = "us-east4-eqdc4a";
+  /** Replicas are set per region; Railway ignores a bare count. */
+  const replicas = (count: number) => ({ regions: { [region]: count } });
   const source = github(repository, { branch: "main", checkSuites: false });
   const build = {
     builder: "DOCKERFILE" as const,
     dockerfilePath: "Dockerfile",
   };
 
-  // Preserve the bucket already in this project. Engine state lives under its
-  // own prefix: two clusters must never share a prefix.
-  const objects = bucket("adaptable-stashbox", { region: "sjc" });
+  // Engine state lives under its own prefix: two clusters must never share one.
+  const objects = bucket("rivet-cluster", { region: "iad" });
   const s3 = {
     S3_BUCKET: ref(objects, "BUCKET"),
     S3_ENDPOINT: ref(objects, "ENDPOINT"),
@@ -64,7 +67,6 @@ export default defineRailway((ctx) => {
   // overlap lets the new storage workers take replicas before the old ones
   // leave; the drain covers the engine's partition handoff (590 s budget).
   const rollout = {
-    region,
     restartPolicyType: "ON_FAILURE" as const,
     overlapSeconds: 120,
     drainingSeconds: 660,
@@ -91,7 +93,7 @@ export default defineRailway((ctx) => {
     const app = service(appName, {
       source,
       build,
-      replicas: 3,
+      ...replicas(3),
       domains: domain ? [{ domain, port: 8080 }] : [],
       // Ready once this replica's runner is registered with the cluster.
       healthcheck: "/api/health/actors",
@@ -111,7 +113,7 @@ export default defineRailway((ctx) => {
   const engine = service("engine", {
     source,
     build,
-    replicas: 3,
+    ...replicas(3),
     // Guard serves /health on 6420. It stays private: no domain.
     healthcheck: "/health",
     healthcheckTimeout: 300,
@@ -129,7 +131,6 @@ export default defineRailway((ctx) => {
   };
   // Stateless tiers: short overlap, drain long enough for actors to sleep.
   const statelessRollout = {
-    region,
     restartPolicyType: "ON_FAILURE" as const,
     overlapSeconds: 30,
     drainingSeconds: 120,
@@ -139,7 +140,7 @@ export default defineRailway((ctx) => {
     const runner = service("runner", {
       source,
       build,
-      replicas: 2,
+      ...replicas(2),
       // Private: answers only /api/health and /api/health/actors.
       healthcheck: "/api/health/actors",
       healthcheckTimeout: 240,
@@ -158,7 +159,7 @@ export default defineRailway((ctx) => {
     const front = service(appName, {
       source,
       build,
-      replicas: 2,
+      ...replicas(2),
       domains: domain ? [{ domain, port: 8080 }] : [],
       // Ready once the engine answers; the front hosts no actors.
       healthcheck: "/api/health/actors",
@@ -180,7 +181,7 @@ export default defineRailway((ctx) => {
   const app = service(appName, {
     source,
     build,
-    replicas: 2,
+    ...replicas(2),
     domains: domain ? [{ domain, port: 8080 }] : [],
     healthcheck: "/api/health/actors",
     healthcheckTimeout: 240,
