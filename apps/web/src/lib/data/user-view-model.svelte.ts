@@ -12,6 +12,7 @@ import {
   describeError,
   idFrom,
   type EntityActor,
+  type EntityDeps,
 } from "./entity-view-model.svelte.js";
 
 /**
@@ -22,9 +23,9 @@ export class UserViewModel extends EntityViewModel<"user"> {
   /** Organizations this person belonged to while this page was open. */
   readonly #joined = new SvelteSet<string>();
 
-  constructor(userId: string) {
+  constructor(userId: string, deps: EntityDeps) {
     // Each person's actor starts the first time they sign in.
-    super({ name: "user", key: userKey(userId), create: true });
+    super({ name: "user", key: userKey(userId), create: true, deps });
   }
 
   protected override apply(next: UserSnapshot): void {
@@ -73,8 +74,8 @@ export class UserViewModel extends EntityViewModel<"user"> {
   /** Claim a new organization. Returns its id, or null with `error` set. */
   async createOrganization(name: string): Promise<string | null> {
     const label = "create-org";
-    if (this.busy.has(label)) return null;
-    this.busy.add(label);
+    const done = this.begin(label);
+    if (!done) return null;
     this.error = null;
     const orgId = idFrom(name, "org");
     try {
@@ -90,7 +91,7 @@ export class UserViewModel extends EntityViewModel<"user"> {
       this.error = describeError(error);
       return null;
     } finally {
-      this.busy.delete(label);
+      done();
     }
   }
 
@@ -100,8 +101,8 @@ export class UserViewModel extends EntityViewModel<"user"> {
     accept: boolean,
   ): Promise<OrganizationSnapshot | null | undefined> {
     const label = `invite:${notice.inviteId}`;
-    if (this.busy.has(label)) return undefined;
-    this.busy.add(label);
+    const done = this.begin(label);
+    if (!done) return undefined;
     this.error = null;
     try {
       return await this.once(
@@ -113,7 +114,7 @@ export class UserViewModel extends EntityViewModel<"user"> {
       this.error = describeError(error);
       return undefined;
     } finally {
-      this.busy.delete(label);
+      done();
     }
   }
 }

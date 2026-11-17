@@ -36,9 +36,9 @@
       <button
         type="button"
         class="text-button older"
-        disabled={project.isBusy(`thread:${taskId}`)}
+        disabled={project.looksBusy(`thread:${taskId}`)}
         onclick={() => void project.loadOlderComments(taskId)}
-        >{project.isBusy(`thread:${taskId}`)
+        >{project.looksBusy(`thread:${taskId}`)
           ? "Loading…"
           : "Show older comments"}</button
       >
@@ -79,8 +79,8 @@
         class="secondary"
         disabled={!body.trim() ||
           !project.connected ||
-          project.isBusy(`comment:${taskId}`)}
-        >{project.isBusy(`comment:${taskId}`) ? "Posting…" : "Post"}</button
+          project.looksBusy(`comment:${taskId}`)}
+        >{project.looksBusy(`comment:${taskId}`) ? "Posting…" : "Post"}</button
       >
     </form>
   {/if}

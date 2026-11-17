@@ -2,12 +2,16 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { resolve } from "$app/paths";
-  import type { Member, Role } from "@example/entities/contracts";
   import {
-    OrganizationViewModel,
+    can,
+    type Member,
+    type Permission,
+    type Role,
+  } from "@example/entities/contracts";
+  import {
     ago,
     clock,
-    getConnections,
+    getOrganization,
     getPrincipal,
     getUser,
     until,
@@ -18,18 +22,22 @@
   import EntityState from "./EntityState.svelte";
   import InlineRename from "./InlineRename.svelte";
   import RoleBadge from "./RoleBadge.svelte";
+  import Skeleton from "./Skeleton.svelte";
 
-  let { orgId }: { orgId: string } = $props();
-
-  // The route keys this component on orgId, so it is fixed for its life.
-  // svelte-ignore state_referenced_locally
-  const org = new OrganizationViewModel(orgId);
+  // The layout owns the socket, so a revisit draws the last snapshot at once.
+  const org = getOrganization();
   const user = getUser();
   const principal = getPrincipal();
-  const connections = getConnections();
 
-  $effect(() => org.connect());
-  $effect(() => connections.track(`organization/${org.orgId}`, org));
+  /** What the person's own mirror already knows: enough to draw the header. */
+  const link = $derived(
+    user.organizations.find((item) => item.orgId === org.orgId) ?? null,
+  );
+  const loading = $derived(org.view === "loading");
+  const name = $derived(org.snapshot?.name ?? link?.name ?? null);
+  /** The live role once the snapshot is in; the mirror's until then. */
+  const role = $derived(org.snapshot ? org.myRole : (link?.role ?? null));
+  const allowed = (permission: Permission): boolean => can(role, permission);
 
   const TABS = ["members", "projects", "invitations", "activity"] as const;
   type Tab = (typeof TABS)[number];
@@ -45,12 +53,16 @@
 
   const removed = $derived(user.lostAccess(org.orgId));
 
-  const counts = $derived({
-    members: org.members.length,
-    projects: org.projects.length,
-    invitations: org.invitations.length,
-    activity: org.activity.length,
-  });
+  const counts = $derived(
+    org.snapshot
+      ? {
+          members: org.members.length,
+          projects: org.projects.length,
+          invitations: org.invitations.length,
+          activity: org.activity.length,
+        }
+      : null,
+  );
 
   let inviteUser = $state("");
   // The person's pick, kept only while they may still grant it.
@@ -119,12 +131,10 @@
 
 {#if removed}
   <div class="notice" role="alert">
-    <h2>
-      You are no longer a member of {org.snapshot?.name ?? "this organization"}.
-    </h2>
+    <h2>You are no longer a member of {name ?? "this organization"}.</h2>
     <a class="inline-link" href={resolve("/data")}>Back to overview</a>
   </div>
-{:else if org.view !== "ready" || !org.snapshot}
+{:else if !loading && (org.view !== "ready" || !org.snapshot)}
   <EntityState
     view={org.view}
     noun="organization"
@@ -133,30 +143,37 @@
   />
 {:else}
   {@const snapshot = org.snapshot}
-  <header class="page-header">
+  <header class="page-header" aria-busy={loading}>
     <nav class="crumbs" aria-label="Breadcrumb">
       <a href={resolve("/data")}>Overview</a><span aria-hidden="true">/</span
       ><span>Organization</span>
     </nav>
-    <InlineRename
-      value={snapshot.name}
-      label="Organization name"
-      editable={org.can("org.rename") && org.connected}
-      busy={org.isBusy("rename")}
-      onsave={(name) => org.rename(name)}
-    />
+    {#if name}
+      <InlineRename
+        value={name}
+        label="Organization name"
+        editable={!!snapshot && org.can("org.rename") && org.connected}
+        busy={org.looksBusy("rename")}
+        onsave={(next) => org.rename(next)}
+      />
+    {:else}
+      <!-- The h1's own line box, so the title lands without moving anything. -->
+      <div class="title-skeleton">
+        <Skeleton width="12ch" height="calc(clamp(28px, 4vw, 40px) * 1.1)" />
+      </div>
+    {/if}
     <div class="header-row">
       <ActorMeta
         actorKey={org.key}
-        revision={snapshot.revision}
-        updatedAt={snapshot.updatedAt}
+        revision={snapshot?.revision}
+        updatedAt={snapshot?.updatedAt}
         connStatus={org.connStatus}
       />
-      {#if org.myRole}
-        <span class="you">You are <RoleBadge role={org.myRole} /></span>
+      {#if role}
+        <span class="you">You are <RoleBadge {role} /></span>
       {/if}
     </div>
-    {#if snapshot.pendingSync.length > 0}
+    {#if snapshot && snapshot.pendingSync.length > 0}
       <p class="sync" role="status">
         Updating {snapshot.pendingSync.length === 1
           ? "1 member's account"
@@ -171,23 +188,29 @@
   {/if}
 
   <nav class="tabs" aria-label="Organization data">
-    {#each TABS as name (name)}
+    {#each TABS as tabName (tabName)}
       <a
-        href={tabHref(name)}
-        aria-current={tab === name ? "page" : undefined}
+        href={tabHref(tabName)}
+        aria-current={tab === tabName ? "page" : undefined}
         data-sveltekit-noscroll
         data-sveltekit-replacestate
         data-sveltekit-keepfocus
       >
-        {name}<span class="tally">{counts[name]}</span>
+        {tabName}<span class="tally">{counts?.[tabName] ?? ""}</span>
       </a>
     {/each}
   </nav>
 
   <section class="panel" aria-label={tab}>
     {#if tab === "members"}
-      {#if org.can("member.invite")}
-        <form class="inline-form" onsubmit={invite}>
+      {#if !role}
+        <div class="toolbar">
+          <Skeleton width="min(100%, 640px)" height="48px" />
+        </div>
+      {:else if !allowed("member.invite")}
+        <p class="toolbar hint">Admins and owners can invite people.</p>
+      {:else}
+        <form class="inline-form toolbar" onsubmit={invite}>
           <label class="sr-only" for="invite-user">User id</label>
           <input
             id="invite-user"
@@ -215,8 +238,8 @@
           </select>
           <button
             type="submit"
-            disabled={!inviteUser.trim() || org.isBusy("invite")}
-            >{org.isBusy("invite") ? "Inviting…" : "Invite"}</button
+            disabled={!inviteUser.trim() || org.looksBusy("invite")}
+            >{org.looksBusy("invite") ? "Inviting…" : "Invite"}</button
           >
         </form>
       {/if}
@@ -230,8 +253,11 @@
           </tr>
         </thead>
         <tbody>
+          {#if !snapshot}
+            {@render skeletonRows(4)}
+          {/if}
           {#each org.members as member (member.userId)}
-            {@const busy = org.isBusy(`member:${member.userId}`)}
+            {@const busy = org.looksBusy(`member:${member.userId}`)}
             {@const self = member.userId === principal.current?.sub}
             <tr>
               <td>
@@ -297,8 +323,16 @@
         </tbody>
       </table>
     {:else if tab === "projects"}
-      {#if org.can("project.write")}
-        <form class="inline-form" onsubmit={createProject}>
+      {#if !role}
+        <div class="toolbar">
+          <Skeleton width="min(100%, 640px)" height="48px" />
+        </div>
+      {:else if !allowed("project.write")}
+        <p class="toolbar hint">
+          Viewers can open projects. Members can start them.
+        </p>
+      {:else}
+        <form class="inline-form toolbar" onsubmit={createProject}>
           <label class="sr-only" for="project-name">Project name</label>
           <input
             id="project-name"
@@ -309,19 +343,29 @@
           />
           <button
             type="submit"
-            disabled={!projectName.trim() || org.isBusy("create-project")}
-            >{org.isBusy("create-project")
+            disabled={!projectName.trim() || org.looksBusy("create-project")}
+            >{org.looksBusy("create-project")
               ? "Starting…"
               : "New project"}</button
           >
         </form>
       {/if}
-      {#if org.projects.length === 0}
+      {#if !snapshot}
+        <ul class="cards" aria-hidden="true">
+          {#each [0, 1, 2] as index (index)}
+            <li class="card skeleton-card">
+              <Skeleton width="60%" height="20px" />
+              <Skeleton width="40%" height="14px" />
+              <Skeleton width="75%" height="14px" />
+            </li>
+          {/each}
+        </ul>
+      {:else if org.projects.length === 0}
         <p class="empty">No projects yet.</p>
       {:else}
         <ul class="cards">
           {#each org.projects as link (link.projectId)}
-            {@const busy = org.isBusy(`project:${link.projectId}`)}
+            {@const busy = org.looksBusy(`project:${link.projectId}`)}
             <li>
               <a
                 class="card"
@@ -374,7 +418,13 @@
         </ul>
       {/if}
     {:else if tab === "invitations"}
-      {#if org.invitations.length === 0}
+      {#if !snapshot}
+        <div class="skeleton-lines" aria-hidden="true">
+          {#each [0, 1] as index (index)}
+            <Skeleton width="100%" height="41px" />
+          {/each}
+        </div>
+      {:else if org.invitations.length === 0}
         <p class="empty">No open invitations.</p>
       {:else}
         <table class="table">
@@ -399,7 +449,7 @@
                     <button
                       type="button"
                       class="text-button"
-                      disabled={org.isBusy(`revoke:${invite.inviteId}`)}
+                      disabled={org.looksBusy(`revoke:${invite.inviteId}`)}
                       onclick={() => void org.revoke(invite.inviteId)}
                       >Revoke</button
                     >
@@ -410,16 +460,41 @@
           </tbody>
         </table>
       {/if}
+    {:else if !snapshot}
+      <div class="skeleton-lines" aria-hidden="true">
+        {#each [0, 1, 2, 3] as index (index)}
+          <Skeleton width="100%" height="41px" />
+        {/each}
+      </div>
     {:else}
       <ActivityList
         entries={org.activity}
         more={org.hasOlderActivity}
-        loading={org.isBusy("history")}
+        loading={org.looksBusy("history")}
         onmore={() => void org.showOlderActivity()}
       />
     {/if}
   </section>
 {/if}
+
+{#snippet skeletonRows(count: number)}
+  {#each { length: count }, index (index)}
+    <tr class="skeleton-row" aria-hidden="true">
+      <td>
+        <span class="person">
+          <Skeleton width="28px" height="28px" round />
+          <span class="skeleton-stack">
+            <Skeleton width="10ch" height="14px" />
+            <Skeleton width="7ch" height="12px" />
+          </span>
+        </span>
+      </td>
+      <td><Skeleton width="7ch" height="20px" /></td>
+      <td><Skeleton width="8ch" height="14px" /></td>
+      <td></td>
+    </tr>
+  {/each}
+{/snippet}
 
 <style>
   .page-header {
@@ -437,6 +512,8 @@
     color: var(--red);
   }
   .header-row {
+    /* The role badge's height, so it can arrive without moving the tabs. */
+    min-height: 22px;
     display: flex;
     flex-wrap: wrap;
     gap: 8px 24px;
@@ -477,10 +554,39 @@
     font-weight: 700;
   }
   .tally {
+    /* Room for the count before it arrives, so the tabs never move. */
+    display: inline-block;
+    min-width: 2ch;
     color: var(--muted);
     font-family: var(--mono);
     font-size: 11px;
     font-weight: 400;
+  }
+  /* One row above each list, the same height whatever it holds. */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    /* The form's controls are 47.6px; one height for form, note and skeleton. */
+    min-height: 48px;
+    margin: 0;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .title-skeleton {
+    display: flex;
+  }
+  .skeleton-stack {
+    gap: 4px;
+  }
+  .skeleton-card {
+    gap: 8px;
+    height: auto;
+  }
+  .skeleton-lines {
+    display: grid;
+    gap: 1px;
   }
   .panel {
     display: grid;

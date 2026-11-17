@@ -10,6 +10,7 @@ import {
   publishTo,
   requireSystem,
   trackSession,
+  ENTITY_OPTIONS,
   writer,
   type EntityVars,
   type PublishContext,
@@ -411,6 +412,7 @@ async function startProject(
  * blocks the change and never misses it.
  */
 export const organization = actor({
+  options: ENTITY_OPTIONS,
   db: organizationDb,
   createVars: (): OrganizationVars => ({
     ...createEntityVars(),

@@ -7,6 +7,7 @@
     SessionViewModel,
   } from "#lib/view-models/session-view-model.svelte.js";
   import type { CounterViewModel } from "#lib/view-models/counter-view-model.svelte.js";
+  import { lagging } from "#lib/lagging.svelte.js";
   import ActorBlock from "./ActorBlock.svelte";
 
   let { session }: { session: SessionViewModel } = $props();
@@ -65,6 +66,17 @@
   const membershipBlocked = $derived(!session.canMutate || request !== null);
   const actionBlocked = $derived(
     session.loading || session.pending || request !== null,
+  );
+  // What the controls show. Increments queue (see `send`), so the panel only
+  // looks busy when a reply is slow: one within a round trip changes nothing
+  // but the value. Membership changes still disable at once, since they
+  // refuse a second click until the session saves.
+  const requestSlow = lagging(() => request !== null);
+  const sessionSlow = lagging(() => session.pending);
+  const httpSlow = lagging(() => model?.httpPending ?? false);
+  const membershipLook = $derived(!session.canMutate || requestSlow.current);
+  const actionLook = $derived(
+    session.loading || session.pending || requestSlow.current,
   );
   const atLimit = $derived(
     !!model?.hasValue && model.count >= Number.MAX_SAFE_INTEGER,
@@ -289,9 +301,27 @@
     if (!target.model.snapshotError && target.model.hasValue)
       receipt(target, `Snapshot refreshed · ${target.label}.`);
   }
-  async function send(target: SessionCounter, viaHttp = false): Promise<void> {
+  /** Increments run one at a time, in click order. */
+  let sending: Promise<void> = Promise.resolve();
+
+  /**
+   * Queue one increment. Every click counts: a click while another reply is
+   * on its way waits its turn instead of being dropped.
+   */
+  function send(target: SessionCounter, viaHttp = false): Promise<void> {
+    if (session.loading || session.pending) return Promise.resolve();
+    const next = sending.then(() => sendNow(target, viaHttp));
+    sending = next.catch(() => {});
+    return next;
+  }
+
+  async function sendNow(
+    target: SessionCounter,
+    viaHttp: boolean,
+  ): Promise<void> {
     const owner = target.model;
     if (
+      !alive ||
       actionBlocked ||
       owner.name !== target.key ||
       (!viaHttp &&
@@ -379,11 +409,11 @@
       ? "Seven actors saved. Remove one to make room."
       : "Create an independent counter"}
     bind:this={addButton}
-    disabled={membershipBlocked || atCapacity}
+    disabled={membershipLook || atCapacity}
     onclick={addActor}
   >
     {#if inHeadline}<span>one</span><span class="add-caption">+ ADD ACTOR</span>
-    {:else}<span>{session.pending ? "Saving…" : "+ Add actor"}</span>{/if}
+    {:else}<span>{sessionSlow.current ? "Saving…" : "+ Add actor"}</span>{/if}
   </button>
 {/snippet}
 
@@ -394,7 +424,7 @@
     aria-label="Undo remove"
     title={removed ? `Restore ${removed.label}` : undefined}
     bind:this={undoButton}
-    disabled={membershipBlocked || undoBlocked}
+    disabled={membershipLook || undoBlocked}
     onclick={undoRemove}>Undo remove</button
   >
 {/snippet}
@@ -405,7 +435,7 @@
       ><i class:online={session.connected} aria-hidden="true"
       ></i>{session.loading
         ? "Restoring session…"
-        : session.pending
+        : sessionSlow.current
           ? "Saving membership…"
           : session.connected
             ? "Session connected"
@@ -430,7 +460,7 @@
       <p role="alert">{sessionError}</p>
       <button
         type="button"
-        disabled={session.pending || request !== null}
+        disabled={sessionSlow.current || requestSlow.current}
         onclick={() => void session.retry()}>Retry session</button
       >
     </div>
@@ -459,8 +489,8 @@
               hasValue={heroActor.model.hasValue}
               connected={heroActor.model.connected}
               selected={session.selectedKey === heroActor.key}
-              pending={request?.key === heroActor.key}
-              disabled={actionBlocked || heroActor.model.snapshotPending}
+              pending={requestSlow.current && request?.key === heroActor.key}
+              disabled={actionLook || heroActor.model.snapshotPending}
               {flat}
               onincrement={() => void send(heroActor)}
               onselect={() => selectActor(heroActor.key)}
@@ -520,7 +550,7 @@
             <button
               type="button"
               class="increment-action"
-              disabled={actionBlocked ||
+              disabled={actionLook ||
                 !model.connected ||
                 !model.hasValue ||
                 model.snapshotPending ||
@@ -530,7 +560,7 @@
             <button
               type="button"
               class="http-action"
-              disabled={actionBlocked || model.httpPending || atLimit}
+              disabled={actionLook || httpSlow.current || atLimit}
               onclick={() => void send(entry, true)}>+ Via HTTP</button
             >
           </div>
@@ -539,7 +569,7 @@
               type="button"
               class="canvas-remove"
               aria-label={`Remove ${entry.label} from playground`}
-              disabled={membershipBlocked}
+              disabled={membershipLook}
               onclick={removeActor}>Remove</button
             >
             {#if removed}{@render undoControl()}{/if}
@@ -551,7 +581,7 @@
                 type="button"
                 class="reconnect-action"
                 bind:this={connectionButton}
-                disabled={request !== null || session.pending}
+                disabled={requestSlow.current || sessionSlow.current}
                 onclick={reconnect}>Reconnect actor</button
               >
             {:else}
@@ -559,7 +589,7 @@
                 type="button"
                 class="disconnect-action"
                 bind:this={connectionButton}
-                disabled={request !== null || session.pending}
+                disabled={requestSlow.current || sessionSlow.current}
                 onclick={disconnect}>Disconnect actor</button
               >
             {/if}
@@ -576,7 +606,7 @@
                 type="button"
                 disabled={model.snapshotPending ||
                   !model.connected ||
-                  request !== null}
+                  requestSlow.current}
                 onclick={refreshCount}>Retry count</button
               >
             </div>
@@ -590,7 +620,7 @@
               {#if model.connected && !model.snapshotError}
                 <button
                   type="button"
-                  disabled={model.snapshotPending || request !== null}
+                  disabled={model.snapshotPending || requestSlow.current}
                   onclick={refreshCount}>Check current count</button
                 >
               {/if}
@@ -633,10 +663,8 @@
                 spellcheck="false"
                 aria-describedby={`${id}-key-help`}
                 title="Use 1–64 letters, numbers, or hyphens. Start with a letter or number. Keys become lowercase."
-                disabled={membershipBlocked}
-              /><button type="submit" disabled={membershipBlocked}
-                >Connect</button
-              >
+                disabled={membershipLook}
+              /><button type="submit" disabled={membershipLook}>Connect</button>
             </div>
             <p id={`${id}-key-help`}>
               Same key, same state. Use 1–64 letters, numbers or hyphens. An
@@ -667,8 +695,8 @@
                     hasValue={actor.model.hasValue}
                     connected={actor.model.connected}
                     selected={session.selectedKey === actor.key}
-                    pending={request?.key === actor.key}
-                    disabled={actionBlocked || actor.model.snapshotPending}
+                    pending={requestSlow.current && request?.key === actor.key}
+                    disabled={actionLook || actor.model.snapshotPending}
                     {flat}
                     onincrement={() => void send(actor)}
                     onselect={() => selectActor(actor.key)}

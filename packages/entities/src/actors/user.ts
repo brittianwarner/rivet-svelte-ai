@@ -10,6 +10,7 @@ import {
   publishTo,
   requireSystem,
   trackSession,
+  ENTITY_OPTIONS,
   writer,
   type EntityContext,
   type EntityVars,
@@ -170,6 +171,7 @@ function store(
  * Organizations own membership; this mirror is written only by them.
  */
 export const user = actor({
+  options: ENTITY_OPTIONS,
   db: userDb,
   createVars: (): EntityVars => createEntityVars(),
   // A user actor is private: only its own person, or the server, may connect.

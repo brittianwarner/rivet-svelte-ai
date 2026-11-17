@@ -70,7 +70,9 @@
     display: flex;
     flex-wrap: wrap;
     gap: 4px 12px;
-    align-items: baseline;
+    /* Centered, not baseline: the 44px button then fits the h1's own line,
+       so it can appear (once editing is allowed) without moving anything. */
+    align-items: center;
   }
   h1 {
     font-size: clamp(28px, 4vw, 40px);

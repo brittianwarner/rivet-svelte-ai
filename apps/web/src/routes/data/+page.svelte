@@ -1,13 +1,29 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { ago, clock, getUser, until } from "#lib/data/index.js";
+  import {
+    ago,
+    clock,
+    getOrganizations,
+    getPrincipal,
+    getUser,
+    until,
+  } from "#lib/data/index.js";
   import ActorMeta from "#lib/components/data/ActorMeta.svelte";
   import EntityState from "#lib/components/data/EntityState.svelte";
   import InlineRename from "#lib/components/data/InlineRename.svelte";
   import RoleBadge from "#lib/components/data/RoleBadge.svelte";
+  import Skeleton from "#lib/components/data/Skeleton.svelte";
 
   const user = getUser();
+  const organizations = getOrganizations();
+  const principal = getPrincipal();
+  const BLOCKS = [
+    { id: "inbox-title", title: "Invitations", rows: 1 },
+    { id: "orgs-title", title: "Organizations", rows: 2 },
+    { id: "new-org-title", title: "New organization", rows: 1 },
+    { id: "profile-title", title: "Profile", rows: 3 },
+  ];
   let orgName = $state("");
 
   async function createOrganization(event: SubmitEvent) {
@@ -21,7 +37,29 @@
   }
 </script>
 
-{#if user.view !== "ready" || !user.snapshot}
+{#if user.view === "loading"}
+  <!-- The page's own frame: only the parts the actor knows wait for it. -->
+  <header class="page-header" aria-busy="true">
+    <p class="eyebrow">ACCOUNT</p>
+    <h1 class="title">{principal.current?.name ?? ""}</h1>
+    <ActorMeta actorKey={user.key} connStatus={user.connStatus} />
+  </header>
+  <div class="grid" aria-hidden="true">
+    {#each BLOCKS as block (block.id)}
+      <section class="block">
+        <div class="block-heading">
+          <h2>{block.title}</h2>
+        </div>
+        <div class="rows">
+          {#each { length: block.rows }, index (index)}
+            <div class="row"><Skeleton width="70%" height="18px" /></div>
+          {/each}
+        </div>
+      </section>
+    {/each}
+  </div>
+  <span class="sr-only" role="status">Loading your account…</span>
+{:else if user.view !== "ready" || !user.snapshot}
   <EntityState
     view={user.view}
     noun="account"
@@ -36,7 +74,7 @@
       value={snapshot.profile.name}
       label="Display name"
       editable={user.connected}
-      busy={user.isBusy("rename")}
+      busy={user.looksBusy("rename")}
       onsave={(name: string) => user.rename(name)}
     />
     <ActorMeta
@@ -58,7 +96,7 @@
       {:else}
         <ul class="rows">
           {#each snapshot.inbox as notice (notice.inviteId)}
-            {@const busy = user.isBusy(`invite:${notice.inviteId}`)}
+            {@const busy = user.looksBusy(`invite:${notice.inviteId}`)}
             <li class="row invite">
               <div>
                 <strong>{notice.orgName}</strong>
@@ -106,6 +144,8 @@
               <a
                 class="row org-link"
                 href={resolve("/data/orgs/[orgId]", { orgId: link.orgId })}
+                onpointerenter={() => organizations.warm(link.orgId)}
+                onfocus={() => organizations.warm(link.orgId)}
               >
                 <span>
                   <strong>{link.name}</strong>
@@ -137,9 +177,9 @@
         />
         <button
           type="submit"
-          disabled={!orgName.trim() || user.isBusy("create-org")}
+          disabled={!orgName.trim() || user.looksBusy("create-org")}
         >
-          {user.isBusy("create-org") ? "Creating…" : "Create"}
+          {user.looksBusy("create-org") ? "Creating…" : "Create"}
         </button>
       </form>
     </section>
@@ -167,6 +207,13 @@
 {/if}
 
 <style>
+  /* Matches InlineRename's h1, so the name does not move once it loads. */
+  .title {
+    font-size: clamp(28px, 4vw, 40px);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+  }
   .page-header {
     display: grid;
     gap: 12px;

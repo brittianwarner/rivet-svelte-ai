@@ -216,6 +216,14 @@ function pruneBuckets(vars: EntityVars, now: number): void {
  * member removed a moment ago and a socket whose token just expired. Use it
  * for every event an entity sends.
  */
+/**
+ * Shared actor options for the entity actors. They sleep after 5 minutes
+ * without a connection instead of Rivet's 30 s, so ordinary back-and-forth
+ * browsing never waits on a wake. Memory per idle actor is small.
+ * https://rivet.dev/docs/actors/lifecycle
+ */
+export const ENTITY_OPTIONS = { sleepTimeout: 5 * 60_000 } as const;
+
 export function publishTo(
   c: PublishContext,
   canRead: (principal: Principal) => boolean = () => true,

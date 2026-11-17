@@ -12,14 +12,15 @@ interface SignInResponse {
   expiresIn: number;
 }
 
-interface IssuedToken {
+export interface IssuedToken {
   principal: Principal;
   token: string;
   /** Local epoch milliseconds. */
   expiresAt: number;
 }
 
-function readSaved(): string | null {
+/** The persona this tab used last, if any. */
+export function savedPersona(): string | null {
   try {
     // Per tab first, so two tabs can be two people watching the same org.
     return (
@@ -44,6 +45,47 @@ function save(sub: string | null): void {
   }
 }
 
+/** Sign one persona in. Relative expiry, so clocks never have to agree. */
+export async function requestToken(
+  sub: string,
+  fetcher: typeof fetch = fetch,
+): Promise<IssuedToken> {
+  const sentAt = Date.now();
+  const response = await fetcher("/api/entities/sign-in", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ persona: sub }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (response.status === 429)
+    throw new Error("Too many sign-ins. Try again in a minute.");
+  if (!response.ok) throw new Error("Could not sign in.");
+  const body = (await response.json()) as SignInResponse;
+  // Count from when the request left, so the token never outlives our estimate.
+  return { ...body, expiresAt: sentAt + body.expiresIn * 1000 };
+}
+
+/** What the `/data` layout load already started, so nothing waits in line. */
+export interface PrincipalPreload {
+  personas: Promise<Principal[]>;
+  /** The remembered persona's sign-in, already in flight. */
+  session: { sub: string; token: Promise<IssuedToken> } | null;
+}
+
+/** Start every request the sign-in screen needs at once. For a load function. */
+export function preloadPrincipal(fetcher: typeof fetch): PrincipalPreload {
+  const personas = fetcher("/api/entities/personas").then(async (response) => {
+    if (!response.ok) throw new Error("Could not load people.");
+    return ((await response.json()) as { personas: Principal[] }).personas;
+  });
+  const sub = savedPersona();
+  const session = sub ? { sub, token: requestToken(sub, fetcher) } : null;
+  // Handled in `start`; keep an early failure from being reported unhandled.
+  personas.catch(() => {});
+  session?.token.catch(() => {});
+  return { personas, session };
+}
+
 /**
  * Who the browser is acting as. Signs in through `/api/entities/sign-in` and
  * hands out a fresh principal token on every actor connect.
@@ -62,26 +104,46 @@ export class PrincipalViewModel {
   #refreshing: Promise<string> | null = null;
   #generation = 0;
 
+  /** A remembered person is signing back in. Draw nothing, not the sign-in screen. */
+  restoring = $state(false);
+
+  /** Pass `restoring` when a remembered sign-in is already in flight. */
+  constructor(options: { restoring?: boolean } = {}) {
+    this.restoring = options.restoring ?? false;
+  }
+
   get signedIn(): boolean {
     return this.current !== null;
   }
 
-  /** Load the personas and restore the last one used in this tab. */
-  async start(): Promise<void> {
+  /**
+   * Load the personas and restore the last one used in this tab. With a
+   * preload, both requests are already running.
+   */
+  async start(preload?: PrincipalPreload): Promise<void> {
+    const { personas, session } = preload ?? preloadPrincipal(fetch);
     this.loading = true;
     this.error = null;
+    const generation = this.#generation;
+    if (session) {
+      this.pending = session.sub;
+      this.restoring = true;
+    }
     try {
-      const response = await fetch("/api/entities/personas");
-      if (!response.ok) throw new Error("Could not load people.");
-      const body = (await response.json()) as { personas: Principal[] };
-      this.personas = body.personas;
-      const saved = readSaved();
-      if (saved && body.personas.some((persona) => persona.sub === saved))
-        await this.signIn(saved);
+      this.personas = await personas;
+      if (session && this.personas.some((p) => p.sub === session.sub)) {
+        const next = await session.token.catch(() => null);
+        // A click on someone else while this was in flight wins.
+        if (next && generation === this.#generation) this.#adopt(next);
+        else if (!next && generation === this.#generation)
+          await this.signIn(session.sub);
+      }
     } catch (error) {
       this.error =
         error instanceof Error ? error.message : "Could not load people.";
     } finally {
+      if (generation === this.#generation) this.pending = null;
+      this.restoring = false;
       this.loading = false;
     }
   }
@@ -92,12 +154,9 @@ export class PrincipalViewModel {
     this.pending = sub;
     this.error = null;
     try {
-      const next = await this.#request(sub);
+      const next = await requestToken(sub);
       if (generation !== this.#generation) return false;
-      this.#token = next.token;
-      this.#expiresAt = next.expiresAt;
-      this.current = next.principal;
-      save(sub);
+      this.#adopt(next);
       return true;
     } catch (error) {
       if (generation === this.#generation)
@@ -126,7 +185,7 @@ export class PrincipalViewModel {
     const sub = this.current?.sub;
     if (!sub) throw new Error("Choose who to sign in as.");
     if (this.#token && this.#fresh()) return this.#token;
-    this.#refreshing ??= this.#request(sub)
+    this.#refreshing ??= requestToken(sub)
       .then((next) => {
         if (this.current?.sub !== sub)
           throw new Error("Signed in as someone else.");
@@ -140,24 +199,15 @@ export class PrincipalViewModel {
     return this.#refreshing;
   }
 
-  #fresh(): boolean {
-    return Date.now() < this.#expiresAt - REFRESH_MARGIN_MS;
+  #adopt(next: IssuedToken): void {
+    this.#token = next.token;
+    this.#expiresAt = next.expiresAt;
+    this.current = next.principal;
+    save(next.principal.sub);
   }
 
-  async #request(sub: string): Promise<IssuedToken> {
-    const sentAt = Date.now();
-    const response = await fetch("/api/entities/sign-in", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ persona: sub }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (response.status === 429)
-      throw new Error("Too many sign-ins. Try again in a minute.");
-    if (!response.ok) throw new Error("Could not sign in.");
-    const body = (await response.json()) as SignInResponse;
-    // Count from when the request left, so the token never outlives our estimate.
-    return { ...body, expiresAt: sentAt + body.expiresIn * 1000 };
+  #fresh(): boolean {
+    return Date.now() < this.#expiresAt - REFRESH_MARGIN_MS;
   }
 }
 

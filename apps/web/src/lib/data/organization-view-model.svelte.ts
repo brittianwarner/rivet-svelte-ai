@@ -10,7 +10,11 @@ import {
   type ProjectLink,
   type Role,
 } from "@example/entities/contracts";
-import { EntityViewModel, idFrom } from "./entity-view-model.svelte.js";
+import {
+  EntityViewModel,
+  idFrom,
+  type EntityDeps,
+} from "./entity-view-model.svelte.js";
 
 /**
  * One organization: members, invitations, the project index, and activity.
@@ -19,8 +23,8 @@ import { EntityViewModel, idFrom } from "./entity-view-model.svelte.js";
 export class OrganizationViewModel extends EntityViewModel<"organization"> {
   readonly orgId: string;
 
-  constructor(orgId: string) {
-    super({ name: "organization", key: organizationKey(orgId) });
+  constructor(orgId: string, deps: EntityDeps) {
+    super({ name: "organization", key: organizationKey(orgId), deps });
     this.orgId = orgId;
   }
 
