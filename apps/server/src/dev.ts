@@ -9,7 +9,7 @@
  *           apps/server or any server package stops it cleanly and starts it
  *           again, in about a second. (Not `bun --watch`: its restart does not
  *           wait for the runner to drain, and the next start then stalls.)
- *   web     Vite on 5173 (apps/web), forwarding /api and /rivet here the way
+ *   web     Vite on WEB_PORT (5173, apps/web), forwarding /api and /rivet here the way
  *           the web service forwards to the api in production.
  *
  * With RIVET_ENDPOINT set (an engine elsewhere), only the API runs.
@@ -23,6 +23,7 @@ import {
   loadRootEnv,
   log,
   portFromEnv,
+  webPort,
 } from "@example/config";
 import { startLocalEngine, type EngineHandle } from "@example/rivet-engine";
 
@@ -167,7 +168,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
 api = startApi();
 if (await waitReady()) {
   log.info("dev ready", {
-    web: "http://localhost:5173",
+    web: `http://localhost:${webPort()}`,
     api: `http://127.0.0.1:${apiPort}`,
     engine: external || engine!.endpoint,
     ...(engine ? { data: engineDataDir() } : {}),
