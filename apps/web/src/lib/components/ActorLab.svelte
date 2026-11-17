@@ -6,7 +6,6 @@
     SessionCounter,
     SessionViewModel,
   } from "#lib/view-models/session-view-model.svelte.js";
-  import type { CounterViewModel } from "#lib/view-models/counter-view-model.svelte.js";
   import { lagging } from "#lib/lagging.svelte.js";
   import ActorBlock from "./ActorBlock.svelte";
 
@@ -15,13 +14,9 @@
   type Receipt = {
     text: string;
     error?: string;
-    model: CounterViewModel;
-    connection: CounterViewModel["actor"];
   };
   type Request = {
     key: string;
-    model: CounterViewModel;
-    connection: CounterViewModel["actor"];
     viaHttp: boolean;
   };
   let flat = $state(false);
@@ -40,7 +35,6 @@
   let inspectorHeading = $state.raw<HTMLHeadingElement | undefined>(undefined);
   let addButton = $state.raw<HTMLButtonElement | undefined>(undefined);
   let undoButton = $state.raw<HTMLButtonElement | undefined>(undefined);
-  let connectionButton = $state.raw<HTMLButtonElement | undefined>(undefined);
   let alive = true;
   let focusedActorKey = "";
 
@@ -48,7 +42,6 @@
     session.actors.find((item) => item.key === session.selectedKey) ??
       session.actors[0],
   );
-  const model = $derived(entry?.model ?? null);
   const slotEntries = $derived(
     slots.map((key) => session.actors.find((item) => item.key === key)),
   );
@@ -73,50 +66,46 @@
   // refuse a second click until the session saves.
   const requestSlow = lagging(() => request !== null);
   const sessionSlow = lagging(() => session.pending);
-  const httpSlow = lagging(() => model?.httpPending ?? false);
+  const httpSlow = lagging(() => entry?.httpPending ?? false);
   const membershipLook = $derived(!session.canMutate || requestSlow.current);
   const actionLook = $derived(
     session.loading || session.pending || requestSlow.current,
   );
   const atLimit = $derived(
-    !!model?.hasValue && model.count >= Number.MAX_SAFE_INTEGER,
+    !!entry?.hasValue && entry.count >= Number.MAX_SAFE_INTEGER,
   );
   const selectedReceipt = $derived(
-    entry &&
-      receipts[entry.key]?.model === model &&
-      receipts[entry.key]?.connection === model?.actor
-      ? receipts[entry.key]
-      : undefined,
+    entry && receipts[entry.key] ? receipts[entry.key] : undefined,
   );
   const sessionError = $derived(session.error ?? session.connectionError);
   const valueStatus = $derived(
-    !model
+    !entry
       ? session.loading
         ? "Restoring your session…"
         : "Add an actor to begin."
-      : model.snapshotError
-        ? model.hasValue
+      : entry.snapshotError
+        ? entry.hasValue
           ? "Last known value · saved count could not be refreshed."
           : "Saved count unavailable."
-        : model.snapshotPending
-          ? model.hasValue
+        : entry.snapshotPending
+          ? entry.hasValue
             ? "Refreshing saved count · showing last known value."
             : "Loading saved count…"
-          : !model.hasValue
+          : !entry.hasValue
             ? "Waiting for the saved count…"
             : atLimit
               ? "Maximum safe count reached."
-              : model.connected
-                ? "Rivet owns this count. Svelte displays it."
-                : "Known value · socket offline. HTTP remains available.",
+              : session.connected
+                ? "The session subscribes to this count. Svelte displays it."
+                : "Known value · session offline. HTTP remains available.",
   );
   const activity = $derived(
     selectedReceipt?.text ??
-      (model?.snapshotError
+      (entry?.snapshotError
         ? "Retry loading the saved count."
-        : model?.snapshotPending
+        : entry?.snapshotPending
           ? "Reading saved count…"
-          : model?.hasValue
+          : entry?.hasValue
             ? "Select inspects. Add 1 changes only that actor."
             : session.loading
               ? "Restoring your saved actors…"
@@ -125,7 +114,7 @@
                 : "No saved actors. Add one to give state a home."),
   );
   const actionError = $derived(
-    selectedReceipt ? selectedReceipt.error : model?.error,
+    selectedReceipt ? selectedReceipt.error : entry?.error,
   );
   const examples = $derived(actorExamples("counter", entry?.key ?? "your-key"));
   const code = $derived(
@@ -142,8 +131,8 @@
           2,
         )
       : codeTab === "state"
-        ? model?.hasValue
-          ? JSON.stringify({ count: model.count }, null, 2)
+        ? entry?.hasValue
+          ? JSON.stringify({ count: entry.count }, null, 2)
           : entry
             ? "// Waiting for the saved count. Zero is not assumed."
             : session.loading
@@ -208,21 +197,11 @@
     void focusInspector(key);
   }
   function receipt(target: SessionCounter, text: string, error?: string): void {
-    if (
-      !alive ||
-      !session.actors.some(
-        (item) => item.key === target.key && item.model === target.model,
-      )
-    )
+    if (!alive || !session.actors.some((item) => item.key === target.key))
       return;
     receipts = {
       ...receipts,
-      [target.key]: {
-        text,
-        error,
-        model: target.model,
-        connection: target.model.actor,
-      },
+      [target.key]: { text, error },
     };
   }
   async function addActor(): Promise<void> {
@@ -263,42 +242,14 @@
     }
     await focusInspector();
   }
-  async function disconnect(): Promise<void> {
-    if (!entry || request || session.pending) return;
-    const target = entry;
-    session.disconnect(target.key);
-    receipt(target, `Socket disconnected · ${target.label}. State retained.`);
-    await tick();
-    connectionButton?.focus({ preventScroll: true });
-    connectionButton?.scrollIntoView({ block: "nearest", behavior: "instant" });
-  }
-  async function reconnect(): Promise<void> {
-    if (!entry || request || session.pending) return;
-    const target = entry;
-    session.reconnect(target.key);
-    receipts = Object.fromEntries(
-      Object.entries(receipts).filter(([key]) => key !== target.key),
-    );
-    await focusInspector(target.key);
-  }
   async function refreshCount(): Promise<void> {
-    if (
-      !entry ||
-      request ||
-      !entry.model.connected ||
-      entry.model.snapshotPending
-    )
+    if (!entry || request || !session.connected || entry.snapshotPending)
       return;
     const target = entry;
-    const connection = target.model.actor;
-    await target.model.refreshCount();
-    if (
-      !alive ||
-      target.model.name !== target.key ||
-      target.model.actor !== connection
-    )
+    await session.refreshCount(target.key);
+    if (!alive || !session.actors.some((item) => item.key === target.key))
       return;
-    if (!target.model.snapshotError && target.model.hasValue)
+    if (!target.snapshotError && target.hasValue)
       receipt(target, `Snapshot refreshed · ${target.label}.`);
   }
   /** Increments run one at a time, in click order. */
@@ -319,22 +270,15 @@
     target: SessionCounter,
     viaHttp: boolean,
   ): Promise<void> {
-    const owner = target.model;
     if (
       !alive ||
       actionBlocked ||
-      owner.name !== target.key ||
       (!viaHttp &&
-        (!owner.connected || !owner.hasValue || owner.snapshotPending)) ||
-      (owner.hasValue && owner.count >= Number.MAX_SAFE_INTEGER)
+        (!session.connected || !target.hasValue || target.snapshotPending)) ||
+      (target.hasValue && target.count >= Number.MAX_SAFE_INTEGER)
     )
       return;
-    const captured: Request = {
-      key: target.key,
-      model: owner,
-      connection: owner.actor,
-      viaHttp,
-    };
+    const captured: Request = { key: target.key, viaHttp };
     request = captured;
     session.select(target.key);
     receipt(
@@ -343,36 +287,28 @@
     );
     void focusInspector(target.key);
     try {
-      if (viaHttp) await owner.incrementViaHttp();
-      else await owner.increment();
+      if (viaHttp) await session.incrementViaHttp(target.key);
+      else await session.increment(target.key);
       if (!alive) return;
-      const sameMember = session.actors.some(
-        (item) => item.key === captured.key && item.model === owner,
-      );
-      if (!sameMember || owner.name !== captured.key) return;
-      if (owner.actor !== captured.connection) {
+      const current = session.actors.find((item) => item.key === captured.key);
+      if (!current) return;
+      if (current.error)
         receipt(
-          target,
-          `Connection changed · ${target.label}. Check its current count before another action.`,
-        );
-        return;
-      }
-      if (owner.error)
-        receipt(
-          target,
-          `Request needs attention · ${target.label}.`,
-          owner.error,
+          current,
+          `Request needs attention · ${current.label}.`,
+          current.error,
         );
       else
         receipt(
-          target,
-          `${viaHttp ? "HTTP response" : "Action response"} received · ${target.label}.${viaHttp && !owner.connected ? " Socket offline." : ""}`,
+          current,
+          `${viaHttp ? "HTTP response" : "Action response"} received · ${current.label}.`,
         );
     } catch (error) {
-      if (owner.name === captured.key && owner.actor === captured.connection) {
+      const current = session.actors.find((item) => item.key === captured.key);
+      if (current) {
         receipt(
-          target,
-          `Request needs attention · ${target.label}.`,
+          current,
+          `Request needs attention · ${current.label}.`,
           error instanceof Error
             ? error.message
             : "The request could not be completed.",
@@ -444,7 +380,8 @@
     <span class="session-counts"
       ><strong aria-label="Session actors">{session.actors.length}</strong>
       saved <span aria-hidden="true">/</span>
-      <strong aria-label="Connected actors">{session.connectedActors}</strong> connected</span
+      <strong aria-label="Connected actors">{session.connectedActors}</strong>
+      {session.connectedActors === 1 ? "connection" : "connections"}</span
     >
     <button
       type="button"
@@ -485,12 +422,12 @@
             <ActorBlock
               actorKey={heroActor.key}
               label={heroActor.label}
-              value={heroActor.model.count}
-              hasValue={heroActor.model.hasValue}
-              connected={heroActor.model.connected}
+              value={heroActor.count}
+              hasValue={heroActor.hasValue}
+              connected={session.connected}
               selected={session.selectedKey === heroActor.key}
               pending={requestSlow.current && request?.key === heroActor.key}
-              disabled={actionLook || heroActor.model.snapshotPending}
+              disabled={actionLook || heroActor.snapshotPending}
               {flat}
               onincrement={() => void send(heroActor)}
               onselect={() => selectActor(heroActor.key)}
@@ -518,9 +455,9 @@
     >
       <div class="client-chrome">
         <span>SVELTE VIEW / SELECTED ACTOR</span><span
-          >{model?.connected
-            ? "CONNECTED"
-            : model?.actor
+          >{session.connected
+            ? "ONE SESSION"
+            : session.actor
               ? "CONNECTING"
               : "OFFLINE"}</span
         >
@@ -533,16 +470,16 @@
               (session.loading ? "Restoring actors…" : "Empty session")}
           </h2>
         </div>
-        {#if entry && model}
+        {#if entry}
           <code class="selected-key" title={entry.key}>{entry.key}</code>
           <div class="client-state">
             <output
               aria-label="Counter value"
               aria-live="polite"
               aria-describedby={`${id}-value-status`}
-              class:long-value={model.hasValue &&
-                String(model.count).length > 10}
-              >{model.hasValue ? String(model.count) : "—"}</output
+              class:long-value={entry.hasValue &&
+                String(entry.count).length > 10}
+              >{entry.hasValue ? String(entry.count) : "—"}</output
             >
             <p id={`${id}-value-status`}>{valueStatus}</p>
           </div>
@@ -551,9 +488,9 @@
               type="button"
               class="increment-action"
               disabled={actionLook ||
-                !model.connected ||
-                !model.hasValue ||
-                model.snapshotPending ||
+                !session.connected ||
+                !entry.hasValue ||
+                entry.snapshotPending ||
                 atLimit}
               onclick={() => void send(entry)}>+ Increment</button
             >
@@ -576,36 +513,19 @@
             {#if !headlineAdd}{@render addControl()}{/if}
           </div>
           <div class="connection-actions">
-            {#if !model.actor}
-              <button
-                type="button"
-                class="reconnect-action"
-                bind:this={connectionButton}
-                disabled={requestSlow.current || sessionSlow.current}
-                onclick={reconnect}>Reconnect actor</button
-              >
-            {:else}
-              <button
-                type="button"
-                class="disconnect-action"
-                bind:this={connectionButton}
-                disabled={requestSlow.current || sessionSlow.current}
-                onclick={disconnect}>Disconnect actor</button
-              >
-            {/if}
             <span
-              >{model.connected
-                ? "Direct actor socket"
-                : "State stays in Rivet"}</span
+              >{session.connected
+                ? "One session connection"
+                : "Session offline. HTTP remains available."}</span
             >
           </div>
-          {#if model.snapshotError}
+          {#if entry.snapshotError}
             <div class="count-recovery">
-              <p class="client-error" role="alert">{model.snapshotError}</p>
+              <p class="client-error" role="alert">{entry.snapshotError}</p>
               <button
                 type="button"
-                disabled={model.snapshotPending ||
-                  !model.connected ||
+                disabled={entry.snapshotPending ||
+                  !session.connected ||
                   requestSlow.current}
                 onclick={refreshCount}>Retry count</button
               >
@@ -617,10 +537,10 @@
                 {actionError} The request may have reached the actor. Check its current
                 count before sending another increment.
               </p>
-              {#if model.connected && !model.snapshotError}
+              {#if session.connected && !entry.snapshotError}
                 <button
                   type="button"
-                  disabled={model.snapshotPending || requestSlow.current}
+                  disabled={entry.snapshotPending || requestSlow.current}
                   onclick={refreshCount}>Check current count</button
                 >
               {/if}
@@ -691,12 +611,12 @@
                   <ActorBlock
                     actorKey={actor.key}
                     label={actor.label}
-                    value={actor.model.count}
-                    hasValue={actor.model.hasValue}
-                    connected={actor.model.connected}
+                    value={actor.count}
+                    hasValue={actor.hasValue}
+                    connected={session.connected}
                     selected={session.selectedKey === actor.key}
                     pending={requestSlow.current && request?.key === actor.key}
-                    disabled={actionLook || actor.model.snapshotPending}
+                    disabled={actionLook || actor.snapshotPending}
                     {flat}
                     onincrement={() => void send(actor)}
                     onselect={() => selectActor(actor.key)}
@@ -710,8 +630,8 @@
     {/if}
     <div class="playground-intro">
       <p>
-        Disconnect closes this socket. Remove changes session membership.
-        Neither destroys the actor.
+        This page opens one session connection. That actor subscribes to each
+        counter. Remove changes membership and does not destroy the counter.
       </p>
     </div>
   </div>
@@ -1077,16 +997,6 @@
     align-items: center;
     gap: 14px;
     margin-top: 9px;
-  }
-  .connection-actions button {
-    border: 0;
-    padding: 6px 0;
-    text-decoration: underline;
-    text-underline-offset: 4px;
-    text-align: left;
-  }
-  .connection-actions button:hover {
-    background: transparent;
   }
   .connection-actions span {
     font-size: 11px;

@@ -5,18 +5,30 @@ import {
   SESSION_ID_PATTERN,
   sessionCounterKey,
   type SessionSnapshot,
+  type SessionValue,
 } from "@example/wire";
 import { getActionError, type ReactiveActorHandle } from "@rivetkit/svelte";
 import { untrack } from "svelte";
 import { actorSocketOptions } from "../actor-socket.js";
 import { getRivet } from "../rivet.js";
-import { CounterViewModel } from "./counter-view-model.svelte.js";
 
 type SessionActor = ReactiveActorHandle<AppRegistry, "session">;
-export interface SessionCounter {
-  key: string;
-  label: string;
-  model: CounterViewModel;
+
+/** One saved counter, projected from the session actor. It does not open a socket. */
+export class SessionCounter {
+  readonly key: string;
+  label = $state("");
+  count = $state(0);
+  hasValue = $state(false);
+  snapshotPending = $state(true);
+  snapshotError = $state<string | null>(null);
+  error = $state<string | null>(null);
+  httpPending = $state(false);
+
+  constructor(key: string, label: string) {
+    this.key = key;
+    this.label = label;
+  }
 }
 type RetryOperation =
   | { kind: "create"; requestId: string }
@@ -55,12 +67,8 @@ export class SessionViewModel {
 
   #rivet = getRivet();
   #options = actorSocketOptions();
-  #pool = Array.from(
-    { length: SESSION_ACTOR_LIMIT },
-    () => new CounterViewModel(),
-  );
   #members = new Map<string, SessionCounter>();
-  #disconnected = new Set<string>();
+  #pendingValues = new Map<string, number>();
   #release: (() => void) | undefined;
   #active = false;
   #generation = 0;
@@ -92,12 +100,9 @@ export class SessionViewModel {
       ? "The session connection was lost. Rivet is reconnecting; you can also retry now."
       : null;
   }
+  /** The page opens one actor: this session. */
   get connectedActors(): number {
-    return new Set(
-      this.actors
-        .filter((entry) => entry.model.connected)
-        .map((entry) => entry.key),
-    ).size;
+    return this.connected ? 1 : 0;
   }
   connect(): () => void {
     if (this.#active) return () => this.#close();
@@ -145,6 +150,9 @@ export class SessionViewModel {
     actor.onEvent("changed", (snapshot) => {
       if (this.#active && this.actor === actor) this.#apply(snapshot);
     });
+    actor.onEvent("value", (value) => {
+      if (this.#active && this.actor === actor) this.#applyValue(value);
+    });
     this.actor = actor;
     this.#release = actor.mount();
     this.#connectionTimer = setTimeout(() => {
@@ -158,17 +166,81 @@ export class SessionViewModel {
   select(key: string): void {
     if (this.#members.has(key)) this.selectedKey = key;
   }
-  disconnect(key: string): void {
+  async increment(key: string): Promise<void> {
     const entry = this.#members.get(key);
+    const actor = this.actor;
     if (!entry) return;
-    this.#disconnected.add(key);
-    entry.model.disconnect();
+    if (!actor?.isConnected) {
+      entry.error = "Not connected yet";
+      return;
+    }
+    const next = await actor.increment(key);
+    if (this.actor !== actor || this.#members.get(key) !== entry) return;
+    if (next == null) {
+      entry.error =
+        getActionError(actor)?.message ?? "Couldn't increment — try again";
+      return;
+    }
+    entry.count = Math.max(entry.count, next);
+    entry.hasValue = true;
+    entry.snapshotPending = false;
+    entry.error = null;
   }
-  reconnect(key: string): void {
+  /** Same counter, reached through the API instead of the session action. */
+  async incrementViaHttp(key: string): Promise<void> {
     const entry = this.#members.get(key);
-    if (!entry || !this.#active) return;
-    this.#disconnected.delete(key);
-    this.#open(entry);
+    if (!entry || entry.httpPending) return;
+    entry.httpPending = true;
+    entry.error = null;
+    try {
+      const response = await fetch(
+        `/api/counters/${encodeURIComponent(key)}/increment`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ by: 1 }),
+        },
+      );
+      const body = (await response.json()) as {
+        count?: number;
+        error?: string;
+      };
+      if (this.#members.get(key) !== entry) return;
+      if (!response.ok || typeof body.count !== "number") {
+        entry.error = body.error ?? "Couldn't increment through the API";
+        return;
+      }
+      entry.count = Math.max(entry.count, body.count);
+      entry.hasValue = true;
+      entry.snapshotPending = false;
+    } catch (error) {
+      if (this.#members.get(key) !== entry) return;
+      entry.error =
+        error instanceof Error
+          ? error.message
+          : "Couldn't increment through the API";
+    } finally {
+      if (this.#members.get(key) === entry) entry.httpPending = false;
+    }
+  }
+  async refreshCount(key: string): Promise<void> {
+    const entry = this.#members.get(key);
+    const actor = this.actor;
+    if (!entry || !actor?.isConnected) return;
+    entry.snapshotPending = true;
+    entry.snapshotError = null;
+    const values = await actor.getValues();
+    if (this.actor !== actor || this.#members.get(key) !== entry) return;
+    entry.snapshotPending = false;
+    const found = values?.find((value) => value.key === key);
+    if (!found || !Number.isSafeInteger(found.count)) {
+      entry.snapshotError =
+        getActionError(actor)?.message ??
+        "Could not load the saved count. Try loading it again.";
+      return;
+    }
+    entry.count = Math.max(entry.count, found.count);
+    entry.hasValue = true;
   }
   async createCounter(): Promise<void> {
     if (!this.canMutate || this.actors.length >= SESSION_ACTOR_LIMIT) return;
@@ -193,7 +265,6 @@ export class SessionViewModel {
     const existing = this.#members.get(normalized);
     if (existing) {
       this.select(normalized);
-      this.reconnect(normalized);
       this.error = null;
       return;
     }
@@ -209,10 +280,27 @@ export class SessionViewModel {
     if (this.#retry) await this.#mutate(this.#retry);
     else await this.#restore(actor);
   }
-  #open(entry: SessionCounter): void {
-    if (entry.model.actor) return;
-    if (entry.model.name === entry.key) entry.model.connect();
-    else entry.model.useName(entry.key);
+  #applyValue(value: SessionValue): void {
+    if (
+      !value ||
+      typeof value.key !== "string" ||
+      !Number.isSafeInteger(value.count) ||
+      value.count < 0
+    )
+      return;
+    const entry = this.#members.get(value.key);
+    if (!entry) {
+      const previous = this.#pendingValues.get(value.key);
+      this.#pendingValues.set(
+        value.key,
+        previous === undefined ? value.count : Math.max(previous, value.count),
+      );
+      return;
+    }
+    entry.count = Math.max(entry.count, value.count);
+    entry.hasValue = true;
+    entry.snapshotPending = false;
+    entry.snapshotError = null;
   }
   #apply(snapshot: SessionSnapshot): void {
     if (!this.#active) return;
@@ -240,28 +328,29 @@ export class SessionViewModel {
         "The session returned an invalid actor registry. Retry the session.";
       return;
     }
-    for (const [key, entry] of this.#members) {
+    for (const [key] of this.#members) {
       if (!snapshot.actors.some((record) => record.key === key)) {
-        entry.model.disconnect();
         this.#members.delete(key);
-        this.#disconnected.delete(key);
+        this.#pendingValues.delete(key);
       }
     }
     for (const record of snapshot.actors) {
       let entry = this.#members.get(record.key);
       if (!entry) {
-        const used = new Set(
-          [...this.#members.values()].map((member) => member.model),
-        );
-        const model = this.#pool.find((candidate) => !used.has(candidate));
-        if (!model) {
+        if (this.#members.size >= SESSION_ACTOR_LIMIT) {
           this.error = "The session actor limit was exceeded.";
           return;
         }
-        entry = { ...record, model };
+        entry = new SessionCounter(record.key, record.label);
+        const pending = this.#pendingValues.get(record.key);
+        if (pending !== undefined) {
+          entry.count = pending;
+          entry.hasValue = true;
+          entry.snapshotPending = false;
+          this.#pendingValues.delete(record.key);
+        }
         this.#members.set(record.key, entry);
       } else entry.label = record.label;
-      if (!this.#disconnected.has(record.key)) this.#open(entry);
     }
     this.revision = snapshot.revision;
     this.actors = snapshot.actors.map((record) =>
@@ -289,6 +378,26 @@ export class SessionViewModel {
           getActionError(actor)?.message ?? "Could not restore your session.",
         );
       this.#apply(snapshot);
+      const values = await actor.getValues();
+      if (
+        !this.#active ||
+        this.actor !== actor ||
+        generation !== this.#generation ||
+        version !== this.#restoreVersion
+      )
+        return;
+      if (!values)
+        throw new Error(
+          getActionError(actor)?.message ?? "Could not load saved counts.",
+        );
+      for (const value of values) this.#applyValue(value);
+      for (const entry of this.actors) {
+        if (entry.hasValue || values.some((value) => value.key === entry.key))
+          continue;
+        entry.snapshotPending = false;
+        entry.snapshotError =
+          "Could not load the saved count. Try loading it again.";
+      }
     } catch (error) {
       if (
         this.#active &&
@@ -339,10 +448,8 @@ export class SessionViewModel {
         operation.kind === "create"
           ? sessionCounterKey(this.id, operation.requestId)
           : operation.key;
-      if (operation.kind !== "remove" && this.#members.has(key)) {
+      if (operation.kind !== "remove" && this.#members.has(key))
         this.selectedKey = key;
-        this.reconnect(key);
-      }
       this.#retry = undefined;
     } catch (error) {
       if (
@@ -372,6 +479,5 @@ export class SessionViewModel {
     this.#release?.();
     this.actor?.dispose();
     this.actor = null;
-    for (const model of this.#pool) model.disconnect();
   }
 }

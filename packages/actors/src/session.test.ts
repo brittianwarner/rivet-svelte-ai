@@ -6,6 +6,7 @@ import {
   SESSION_ACTOR_LIMIT,
   sessionCounterKey,
   type SessionSnapshot,
+  type SessionValue,
 } from "@example/wire";
 
 const actions = session.config.actions!;
@@ -16,20 +17,44 @@ function context(input: {
   id: string;
   db: MemoryDatabase;
   changes: SessionSnapshot[];
+  values?: SessionValue[];
   getCount?: () => Promise<number>;
+  counts?: Map<string, number>;
+  disposed?: string[];
 }): Context {
+  const counts = input.counts ?? new Map<string, number>();
+  const counter = (key: string, create = false) => ({
+    getCount: (create && input.getCount) || (async () => counts.get(key) ?? 0),
+    async increment(by: number) {
+      const next = (counts.get(key) ?? 0) + by;
+      counts.set(key, next);
+      return next;
+    },
+    connect: () => ({
+      on() {},
+      async dispose() {
+        input.disposed?.push(key);
+      },
+    }),
+  });
   return {
     key: [input.id],
     db: input.db,
-    broadcast(_event: string, value: SessionSnapshot) {
-      input.changes.push(value);
+    vars: {
+      subs: new Map(),
+      counts: new Map(),
+      generation: new Map(),
+      inflight: new Map(),
+    },
+    broadcast(event: string, value: unknown) {
+      if (event === "changed") input.changes.push(value as SessionSnapshot);
+      else input.values?.push(value as SessionValue);
     },
     client() {
       return {
         counter: {
-          getOrCreate() {
-            return { getCount: input.getCount ?? (async () => 0) };
-          },
+          get: (key: [string, string]) => counter(key[1]),
+          getOrCreate: (key: [string, string]) => counter(key[1], true),
         },
       };
     },
@@ -193,4 +218,38 @@ test("the first migration carries pre-3.0 membership and retry history forward",
       revision: 0,
     });
   }
+});
+
+test("the session relays member counts over its own socket and drops removed members", async () => {
+  const id = crypto.randomUUID();
+  const changes: SessionSnapshot[] = [];
+  const values: SessionValue[] = [];
+  const disposed: string[] = [];
+  const counts = new Map<string, number>();
+  const c = context({
+    id,
+    db: await migratedDatabase(session),
+    changes,
+    values,
+    counts,
+    disposed,
+  });
+  const [starter] = (await actions.ensureStarter(c)).actors;
+  assert.deepEqual(await actions.getValues(c), [
+    { key: starter.key, count: 0 },
+  ]);
+  assert.equal(await actions.increment(c, starter.key), 1);
+  assert.deepEqual(values.at(-1), { key: starter.key, count: 1 });
+  await assert.rejects(
+    actions.increment(c, "not-a-member"),
+    /not in this session/,
+  );
+  await actions.removeCounter(c, starter.key);
+  assert.deepEqual(
+    disposed,
+    [starter.key],
+    "removal disposes the subscription",
+  );
+  assert.deepEqual(await actions.getValues(c), []);
+  assert.equal(counts.get(starter.key), 1, "removal never touches the counter");
 });

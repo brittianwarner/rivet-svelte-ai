@@ -69,6 +69,12 @@ export interface SessionSnapshot {
   revision: number;
 }
 
+/** A counter value observed by the session. The counter actor remains the owner. */
+export interface SessionValue {
+  key: string;
+  count: number;
+}
+
 export const SESSION_ACTOR_LIMIT = 7;
 /** crypto.randomUUID() produces this canonical lowercase representation. */
 export const SESSION_ID_PATTERN =

@@ -29,8 +29,11 @@ test("simultaneous first visits use the same browser session", async ({
     "2",
   );
   await page.reload();
-  await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
+  await expect(page.getByLabel("Session actors", { exact: true })).toHaveText(
     "2",
+  );
+  await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "1",
   );
   await expect(page.locator(".session-status")).toHaveAttribute(
     "data-session-id",
@@ -59,21 +62,19 @@ test("session actor retains the registry across reloads and tabs while visitors 
     .getByLabel("Actor key", { exact: true })
     .inputValue();
   await page.getByRole("button", { name: "Add actor", exact: true }).click();
-  await expect(count).toHaveText("2");
+  await expect(count).toHaveText("1");
   await expect(registered).toHaveText("2");
+  // One socket either way, so wait for the new actor to become selected.
+  await expect(client.getByLabel("Actor key", { exact: true })).not.toHaveValue(
+    firstKey,
+  );
   const secondKey = await client
     .getByLabel("Actor key", { exact: true })
     .inputValue();
-  expect(secondKey).not.toBe(firstKey);
   await page.getByRole("button", { name: "+ Increment", exact: true }).click();
   await expect(client.getByLabel("Counter value", { exact: true })).toHaveText(
     "1",
   );
-  await client
-    .getByRole("button", { name: "Disconnect actor", exact: true })
-    .click();
-  await expect(count).toHaveText("1");
-  await expect(registered).toHaveText("2");
   await expect(page.locator(".actor-chip")).toHaveCount(2);
   await page
     .getByRole("button", { name: "Session state", exact: true })
@@ -86,7 +87,8 @@ test("session actor retains the registry across reloads and tabs while visitors 
     secondKey,
   ]);
   await page.reload();
-  await expect(count).toHaveText("2");
+  await expect(registered).toHaveText("2");
+  await expect(count).toHaveText("1");
   await expect(page.locator(".session-status")).toHaveAttribute(
     "data-session-id",
     sessionId!,
@@ -102,8 +104,11 @@ test("session actor retains the registry across reloads and tabs while visitors 
   const secondTab = await context.newPage();
   await secondTab.goto("/#playground");
   await expect(
-    secondTab.getByLabel("Connected actors", { exact: true }),
+    secondTab.getByLabel("Session actors", { exact: true }),
   ).toHaveText("2");
+  await expect(
+    secondTab.getByLabel("Connected actors", { exact: true }),
+  ).toHaveText("1");
   await expect(secondTab.locator(".session-status")).toHaveAttribute(
     "data-session-id",
     sessionId!,
@@ -111,7 +116,7 @@ test("session actor retains the registry across reloads and tabs while visitors 
   await secondTab
     .getByRole("button", { name: "Add actor", exact: true })
     .click();
-  await expect(count).toHaveText("3");
+  await expect(count).toHaveText("1");
   await expect(registered).toHaveText("3");
 
   const isolated = await browser.newContext();
@@ -166,7 +171,7 @@ test("canvas add, remove, and undo synchronize membership and preserve counter s
   await canvasControls.getByRole("button", { name: "Add actor" }).click();
   await expect(saved).toHaveText("2");
   await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
-    "2",
+    "1",
   );
   await expect(page.locator(".actor-marker")).toHaveCount(2);
   await page.getByRole("button", { name: "+ Increment", exact: true }).click();
@@ -205,7 +210,7 @@ test("canvas add, remove, and undo synchronize membership and preserve counter s
   ).toBeVisible();
   await expect(saved).toHaveText("0");
   await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
-    "0",
+    "1",
   );
   await page.screenshot({
     path: "test-results/design-empty.png",
@@ -216,7 +221,7 @@ test("canvas add, remove, and undo synchronize membership and preserve counter s
   await expect(page.getByLabel("Counter value", { exact: true })).toHaveText(
     "0",
   );
-  // Fill, remove a middle member, and refill: pooled models must not share sockets.
+  // Fill, remove a middle member, and refill. One session connection stays up.
   for (let i = 2; i <= 7; i++) {
     await canvasControls.getByRole("button", { name: "Add actor" }).click();
     await expect(saved).toHaveText(String(i));
@@ -239,12 +244,16 @@ test("canvas add, remove, and undo synchronize membership and preserve counter s
     .click();
   await expect(saved).toHaveText("6");
   await canvasControls.getByRole("button", { name: "Add actor" }).click();
+  await expect(saved).toHaveText("7");
   await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "1",
+  );
+  await expect(other.getByLabel("Session actors", { exact: true })).toHaveText(
     "7",
   );
   await expect(
     other.getByLabel("Connected actors", { exact: true }),
-  ).toHaveText("7");
+  ).toHaveText("1");
   await expect(page.locator(".actor-marker")).toHaveCount(7);
   await page.getByRole("button", { name: "+ Increment", exact: true }).click();
   await expect(page.getByLabel("Counter value", { exact: true })).toHaveText(

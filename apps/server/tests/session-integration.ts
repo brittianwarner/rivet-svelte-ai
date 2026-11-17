@@ -6,6 +6,7 @@ import {
   sessionCounterKey,
   type ClientConfig,
   type SessionSnapshot,
+  type SessionValue,
 } from "@example/wire";
 
 const origin = process.env.SMOKE_API_ORIGIN || "http://127.0.0.1:3001";
@@ -42,7 +43,9 @@ try {
   const handle = client.session.getOrCreate([id], options);
   const connection = handle.connect();
   const events: SessionSnapshot[] = [];
+  const values: SessionValue[] = [];
   connection.on("changed", (snapshot) => events.push(snapshot));
+  connection.on("value", (value) => values.push(value));
   assert.deepEqual(await connection.getSnapshot(), { actors: [], revision: 0 });
   const starters = await Promise.all([
     connection.ensureStarter(),
@@ -81,11 +84,21 @@ try {
       .increment(3),
     3,
   );
+  await until(async () =>
+    values.some((value) => value.key === createdKey && value.count === 3),
+  );
+  const observed = await connection.getValues();
+  assert.equal(observed.find((value) => value.key === starter.key)?.count, 0);
+  assert.equal(observed.find((value) => value.key === createdKey)?.count, 3);
+  assert.equal(await connection.increment(starter.key), 1);
+  await until(async () =>
+    values.some((value) => value.key === starter.key && value.count === 1),
+  );
   assert.equal(
     await client.counter
       .getOrCreate(["counter", starter.key], options)
       .getCount(),
-    0,
+    1,
   );
   await until(async () =>
     events.some((snapshot) =>
@@ -145,6 +158,11 @@ try {
       .getCount(),
     4,
   );
+  assert.equal(
+    (await connection.getValues()).find((value) => value.key === externalKey)
+      ?.count,
+    4,
+  );
   await assert.rejects(handle.createCounter("not-a-uuid"));
   await assert.rejects(handle.attachCounter("Invalid Key"));
   await assert.rejects(handle.attachCounter("x".repeat(65)));
@@ -197,7 +215,7 @@ try {
     await freshClient.dispose();
   }
   console.log(
-    "session integration passed: real actors, request idempotency, isolation, bounded concurrent admission, events, and reconnect restoration",
+    "session integration passed: real actors, request idempotency, isolation, value relay, bounded concurrent admission, events, and reconnect restoration",
   );
 } finally {
   clearTimeout(timeout);

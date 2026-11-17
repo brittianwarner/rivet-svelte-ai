@@ -10,6 +10,9 @@ test("hovering playground controls preserves readable text contrast", async ({
   );
   await page.getByRole("button", { name: "Add actor", exact: true }).click();
   await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "1",
+  );
+  await expect(page.getByLabel("Session actors", { exact: true })).toHaveText(
     "2",
   );
   const controls = page
@@ -84,6 +87,9 @@ test("a delayed response stays with its actor after selection changes", async ({
   );
   await lab.getByRole("button", { name: "Add actor", exact: true }).click();
   await expect(lab.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "1",
+  );
+  await expect(lab.getByLabel("Session actors", { exact: true })).toHaveText(
     "2",
   );
   let release: () => void = () => {};
@@ -225,15 +231,6 @@ test("HTTP actions show pending and failure without inventing state or socket ev
   await expect(http).toBeEnabled();
   await page.unroute("**/api/counters/*/increment");
 
-  await client
-    .getByRole("button", { name: "Disconnect actor", exact: true })
-    .click();
-  await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
-    "0",
-  );
-  await expect(
-    page.getByRole("button", { name: "+ Increment", exact: true }),
-  ).toBeDisabled();
   await http.click();
   await expect(value).toHaveText("2");
   await expect(client.getByRole("alert")).toHaveCount(0);
@@ -241,12 +238,12 @@ test("HTTP actions show pending and failure without inventing state or socket ev
   await expect(page.locator(".activity-line")).not.toContainText(
     "newCount event",
   );
-  await client
-    .getByRole("button", { name: "Reconnect actor", exact: true })
-    .click();
   await expect(page.getByLabel("Connected actors", { exact: true })).toHaveText(
     "1",
   );
+  await expect(
+    page.getByRole("button", { name: "+ Increment", exact: true }),
+  ).toBeEnabled();
   await expect(value).toHaveText("2");
 });
 
@@ -270,7 +267,10 @@ test("the live Svelte view controls independent real actors and exposes working 
     fullPage: true,
   });
   await add.click();
-  await expect(connected).toHaveText("2");
+  await expect(connected).toHaveText("1");
+  await expect(lab.getByLabel("Session actors", { exact: true })).toHaveText(
+    "2",
+  );
   await expect(
     client.getByRole("heading", { name: "counter-02", exact: true }),
   ).toBeVisible();
@@ -315,17 +315,15 @@ test("the live Svelte view controls independent real actors and exposes working 
   ).toBeCloseTo(height, 0);
   await lab.getByRole("button", { name: "Live state", exact: true }).click();
   await add.click();
-  await expect(connected).toHaveText("3");
-  await client
-    .getByRole("button", { name: "Disconnect actor", exact: true })
-    .click();
-  await expect(connected).toHaveText("2");
-  await client
-    .getByRole("button", { name: "Reconnect actor", exact: true })
-    .click();
-  await expect(connected).toHaveText("3");
+  await expect(lab.getByLabel("Session actors", { exact: true })).toHaveText(
+    "3",
+  );
+  await expect(connected).toHaveText("1");
   for (let i = 0; i < 4; i++) await add.click();
-  await expect(connected).toHaveText("7");
+  await expect(lab.getByLabel("Session actors", { exact: true })).toHaveText(
+    "7",
+  );
+  await expect(connected).toHaveText("1");
   await expect(add).toBeDisabled();
   await expect(lab.locator(".actor-marker")).toHaveCount(7);
   await lab.getByRole("button", { name: "Flat view", exact: true }).click();
@@ -356,8 +354,11 @@ test("seven restored actors stay selectable and peer selection brings focus to n
   for (let i = 0; i < 6; i++)
     await lab.getByRole("button", { name: "Add actor", exact: true }).click();
   await page.reload();
-  await expect(lab.getByLabel("Connected actors", { exact: true })).toHaveText(
+  await expect(lab.getByLabel("Session actors", { exact: true })).toHaveText(
     "7",
+  );
+  await expect(lab.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "1",
   );
   await expect(lab.locator(".actor-marker")).toHaveCount(7);
   await lab
@@ -417,8 +418,11 @@ test("native actor actions work without WebGL and with a flat reduced-motion mod
     lab.getByRole("button", { name: "Flat view", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
   await lab.getByRole("button", { name: "Add actor", exact: true }).click();
-  await expect(lab.getByLabel("Connected actors", { exact: true })).toHaveText(
+  await expect(lab.getByLabel("Session actors", { exact: true })).toHaveText(
     "2",
+  );
+  await expect(lab.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "1",
   );
   // The dimensional face remains an actual button, not a canvas hit target.
   await lab
@@ -460,8 +464,11 @@ test("connecting an already-saved key at capacity selects it without a duplicate
     .inputValue();
   for (let i = 0; i < 6; i++)
     await lab.getByRole("button", { name: "Add actor", exact: true }).click();
-  await expect(lab.getByLabel("Connected actors", { exact: true })).toHaveText(
+  await expect(lab.getByLabel("Session actors", { exact: true })).toHaveText(
     "7",
+  );
+  await expect(lab.getByLabel("Connected actors", { exact: true })).toHaveText(
+    "1",
   );
   await openKeySettings(client);
   await client.getByLabel("Actor key", { exact: true }).fill(key);
@@ -470,7 +477,7 @@ test("connecting an already-saved key at capacity selects it without a duplicate
     client.getByRole("heading", { name: "counter-01", exact: true }),
   ).toBeVisible();
   await expect(lab.getByLabel("Connected actors", { exact: true })).toHaveText(
-    "7",
+    "1",
   );
   await expect(lab.getByLabel("Session actors", { exact: true })).toHaveText(
     "7",
@@ -508,8 +515,11 @@ test.describe("phone controls", () => {
       await expect(add).toHaveCount(1);
       await add.tap();
       await expect(
-        lab.getByLabel("Connected actors", { exact: true }),
+        lab.getByLabel("Session actors", { exact: true }),
       ).toHaveText("2");
+      await expect(
+        lab.getByLabel("Connected actors", { exact: true }),
+      ).toHaveText("1");
       await client
         .getByRole("button", { name: "+ Increment", exact: true })
         .tap();
@@ -531,8 +541,11 @@ test.describe("phone controls", () => {
       ).toHaveText("1");
       for (let i = 0; i < 5; i++) await add.tap();
       await expect(
-        lab.getByLabel("Connected actors", { exact: true }),
+        lab.getByLabel("Session actors", { exact: true }),
       ).toHaveText("7");
+      await expect(
+        lab.getByLabel("Connected actors", { exact: true }),
+      ).toHaveText("1");
       await lab
         .getByRole("button", { name: "Inspect actor counter-01", exact: true })
         .tap();

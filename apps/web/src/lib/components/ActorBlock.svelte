@@ -49,7 +49,7 @@
   <span id={`${id}-identity`} class="sr-only">
     {label}. Key {actorKey}.
     {hasValue ? `Displayed value ${value}.` : "Saved count not loaded yet."}
-    {connected ? "Socket connected." : "Socket disconnected."}
+    {connected ? "Session subscribed." : "Session offline."}
   </span>
   <button
     type="button"

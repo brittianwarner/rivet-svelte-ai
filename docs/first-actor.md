@@ -62,7 +62,7 @@ The actual counter also checks demo connection parameters and integer overflow, 
 
 The registry in `packages/actors/src/registry.ts` passes `{ counter, chat, session, ...entityActors }` to `setup({ use: ... })`. A definition describes a kind of actor. `getOrCreate(["counter", "demo"])` selects one instance of that kind. A different key selects independent state.
 
-The homepage uses a visitor's session actor to create and remember counter keys. See `packages/actors/src/session.ts` for typed actor-to-actor calls and `apps/web/src/lib/view-models/session-view-model.svelte.ts` for restoration. The session stores membership; each counter still owns its value. The direct counter example below works independently of the session registry.
+The homepage uses a visitor's session actor to create and remember counter keys, then subscribes to those counters from the session. The page opens only that session connection. See `packages/actors/src/session.ts` for the subscription and `apps/web/src/lib/view-models/session-view-model.svelte.ts` for restoration. The session stores membership; each counter still owns its value. The direct counter example below is the teaching path. The homepage does not mount it.
 
 Register a new actor next to the existing definitions. The exported registry type gives clients their available action names, arguments, and return types.
 
@@ -118,9 +118,9 @@ The counter is monotonic, so it can safely keep the larger of a snapshot and a n
 {/if}
 ```
 
-Render this beneath `RivetProvider`, as the homepage playground does. It should never initialize before the provider exists. The component renders only a confirmed value; connection alone does not establish that the saved count has loaded. The view model accepts action and HTTP responses as well as `newCount` events. A successful response does not prove that a socket event was observed.
+Render a standalone counter beneath `RivetProvider`. It should never initialize before the provider exists. The playground does not mount this view model: `SessionViewModel` opens one session handle, and the session actor subscribes to each counter. The component renders only a confirmed value; connection alone does not establish that the saved count has loaded. A standalone counter view model accepts action and HTTP responses as well as `newCount` events. The playground accepts the session action, the HTTP response, and the session's `value` event. A successful response does not prove that a socket event was observed.
 
-The playground’s **Svelte connection** example shows component-owned `useActor` with a reactive key; **View model** shows explicit `createReactiveActor` ownership. Both subscribe before fetching a snapshot, reject late results from an old connection, and render an unknown value until a snapshot or event confirms it. Their `Math.max` reconciliation is specific to this increment-only counter. The application view model above also owns HTTP, re-keying, snapshot status, and connection recovery.
+The playground’s **Svelte connection** and **View model** tabs are displayed excerpts, not live sockets. **Svelte connection** shows component-owned `useActor` with a reactive key; **View model** shows explicit `createReactiveActor` ownership. Both subscribe before fetching a snapshot, reject late results from an old connection, and render an unknown value until a snapshot or event confirms it. Their `Math.max` reconciliation is specific to this increment-only counter. The application view model above also owns HTTP, re-keying, snapshot status, and connection recovery.
 
 ## Try these changes
 

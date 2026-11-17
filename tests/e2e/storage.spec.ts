@@ -27,9 +27,12 @@ for (const failure of ["denied", "quota"] as const) {
       page.getByLabel("Connected actors", { exact: true }),
     ).toHaveText("1");
     await page.getByRole("button", { name: "Add actor", exact: true }).click();
+    await expect(page.getByLabel("Session actors", { exact: true })).toHaveText(
+      "2",
+    );
     await expect(
       page.getByLabel("Connected actors", { exact: true }),
-    ).toHaveText("2");
+    ).toHaveText("1");
     expect(errors).toEqual([]);
   });
 }
