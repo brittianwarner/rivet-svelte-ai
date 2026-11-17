@@ -63,6 +63,7 @@ export {
 export {
   SYSTEM,
   configureEntities,
+  entityFiles,
   exportTtlMs,
   isSystem,
   signPrincipal,

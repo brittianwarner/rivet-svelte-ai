@@ -3,7 +3,7 @@
 {
 	skip_install_trust
 }
-s3.local, rivet.s3.local {
+s3.local, rivet.s3.local, files.s3.local {
 	tls internal
 	reverse_proxy minio:9000
 }

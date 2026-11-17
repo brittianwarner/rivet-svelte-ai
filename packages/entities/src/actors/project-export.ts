@@ -14,7 +14,7 @@ import {
 import type { ExportStatus, Task } from "../contracts.ts";
 import { parseKey, projectKey } from "../keys.ts";
 import { asSystem, unlessMissing, type PeerHost } from "../peers.ts";
-import { isSystem } from "../principal.ts";
+import { entityFiles, isSystem } from "../principal.ts";
 import type { ExportSource } from "./project.ts";
 
 /**
@@ -24,14 +24,16 @@ import type { ExportSource } from "./project.ts";
  * This is the pattern for durable work that outlives a request. The project
  * records the export and creates this actor; the actor's `run` is a workflow,
  * so each step is recorded and a crash or deploy resumes at the step that was
- * running. The file lives in the actor's own SQLite database, is served by
- * `onRequest`, and is deleted with the actor when it expires.
+ * running. The actor's SQLite holds the job record; the CSV itself goes to
+ * the file store (the api's bucket in production, `@example/files`), so a
+ * large export never bloats the actor. `onRequest` streams it from there, and
+ * it is deleted before the actor is.
  *
  *   start   → tell the project the job is running
- *   build   → read the rows from the project, write the CSV (retried)
+ *   build   → read the rows from the project, store the CSV (retried)
  *   ready   → report rows and size to the project
  *   sleep   → durable timer until the file expires
- *   expire  → tell the project, then destroy this actor and its file
+ *   expire  → tell the project, delete the file, destroy this actor
  *
  * The project is the source of truth. If it does not know this export (a
  * client created the actor by guessing a key, or the project is gone), the
@@ -77,6 +79,8 @@ const exportDb = db({
           );
         `,
       },
+      // Files moved to the file store.
+      { version: 2, sql: "DROP TABLE files;" },
     ],
   }),
 });
@@ -151,7 +155,19 @@ function toCsv(tasks: Task[]): string {
   return [header.join(","), ...lines].join("\r\n") + "\r\n";
 }
 
-const FILE = "export.csv";
+const CONTENT_TYPE = "text/csv; charset=utf-8";
+
+/** Where this export's bytes live in the file store. */
+function fileKey(key: readonly string[]): string {
+  const { orgId, projectId, exportId } = idsOf(key);
+  return `exports/${orgId}/${projectId}/${exportId}.csv`;
+}
+
+/** Delete the file, then the actor. Safe to repeat. */
+async function discard(s: ExportHost & { destroy(): void }): Promise<void> {
+  await entityFiles().delete(fileKey(s.key));
+  s.destroy();
+}
 
 export const projectExport = actor({
   db: exportDb,
@@ -184,7 +200,7 @@ export const projectExport = actor({
       },
     });
     if (!known) {
-      await ctx.step("discard", async (s) => s.destroy());
+      await ctx.step("discard", async (s) => discard(s));
       return;
     }
 
@@ -198,21 +214,15 @@ export const projectExport = actor({
         );
         if (!source) return null;
         const body = new TextEncoder().encode(toCsv(source.tasks));
-        await s.db.transaction(
-          async (tx) => {
-            await tx.execute(
-              "INSERT OR REPLACE INTO files (name, content_type, body) VALUES (?, 'text/csv; charset=utf-8', ?)",
-              FILE,
-              body,
-            );
-            await tx.execute(
-              "UPDATE job SET status = 'ready', rows = ?, bytes = ?, expires_at = ? WHERE id = 1",
-              source.tasks.length,
-              body.byteLength,
-              source.expiresAt,
-            );
-          },
-          { name: "export.write" },
+        // Bytes first, then the record: a retry overwrites the same key.
+        await entityFiles().put(fileKey(s.key), body, {
+          contentType: CONTENT_TYPE,
+        });
+        await s.db.execute(
+          "UPDATE job SET status = 'ready', rows = ?, bytes = ?, expires_at = ? WHERE id = 1",
+          source.tasks.length,
+          body.byteLength,
+          source.expiresAt,
         );
         s.broadcast("progress", await readJob(s));
         return {
@@ -231,7 +241,7 @@ export const projectExport = actor({
           error,
         );
         await report(s, { status: "failed", error });
-        s.destroy();
+        await discard(s);
       });
       return;
     }
@@ -250,23 +260,23 @@ export const projectExport = actor({
 
     await ctx.step("expire", async (s) => {
       await report(s, { status: "expired" });
-      s.destroy();
+      await discard(s);
     });
   }),
 
-  /** GET serves the file to a connection `onBeforeConnect` already allowed. */
+  /** GET streams the file to a connection `onBeforeConnect` already allowed. */
   onRequest: async (c, request) => {
     if (request.method !== "GET") return new Response(null, { status: 405 });
     caller(c);
-    const [file] = await c.db.execute<{
-      content_type: string;
-      body: Uint8Array;
-    }>("SELECT content_type, body FROM files WHERE name = ?", FILE);
+    const job = await readJob(c);
+    const file =
+      job.status === "ready" ? await entityFiles().get(fileKey(c.key)) : null;
     if (!file) return new Response("Not ready.", { status: 404 });
     const { projectId } = idsOf(c.key);
-    return new Response(new Uint8Array(file.body), {
+    return new Response(file.body, {
       headers: {
-        "content-type": file.content_type,
+        "content-type": file.contentType,
+        "content-length": String(file.size),
         "content-disposition": `attachment; filename="${projectId}-tasks.csv"`,
         "cache-control": "private, no-store",
         "x-content-type-options": "nosniff",

@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
 
 const enginePort = Number(process.env.E2E_ENGINE_PORT || 6540);
@@ -20,6 +22,8 @@ export const serverEnv = {
   RIVET_TOKEN: "default",
   RIVET_NAMESPACE: "default",
   ...(production ? {} : { WEB_HANDLER: "none" }),
+  // Exports land here, never in the developer's .rivet/files.
+  FILES_DIR: join(tmpdir(), "rivet-e2e-files"),
   ACTOR_TOKEN: "",
   OPENROUTER_API_KEY: "",
   GOOGLE_GENERATIVE_AI_API_KEY: "",

@@ -14,22 +14,23 @@ This is a community-built Rivet Actors + SvelteKit starter and workspace Svelte 
 
 Turborepo workspace. `apps/` are deployables; `packages/` are services and libraries. Each server-side service is its own package; `apps/server` composes them into one process and `ROLE` picks which ones run (see `servicesFor` in `packages/config`).
 
-| Location                          | Responsibility                                                                         |
-| --------------------------------- | -------------------------------------------------------------------------------------- |
-| `apps/server/`                    | The one deployable: composes the services by `ROLE`; boot and drain; integration tests |
-| `apps/web/`                       | SvelteKit app; built into a handler the server mounts                                  |
-| `packages/actors/`                | Counter, session, chat actors and the registry; server-owned rules and data            |
-| `packages/entities/`              | User/organization/project/export actors, principals, access, `commit`, outbox          |
-| `packages/api/`                   | Elysia routes as plugins; dependencies injected, no environment reads                  |
-| `packages/rivet-engine/`          | Engine node from `S3_*`, namespace bootstrap                                           |
-| `packages/rivet-edge/`            | The `/rivet` relay and scoped engine tokens; admin routes denied                       |
-| `packages/config/`                | Environment, `ROLE` presets, structured logging                                        |
-| `packages/wire/`                  | Browser-safe shared contracts, validation patterns, and limits                         |
-| `packages/rivetkit-svelte/`       | Reusable Svelte adapter, public API, and lifecycle tests                               |
-| `packages/sveltekit-adapter-bun/` | Vendored SvelteKit adapter for Bun (excluded from Prettier)                            |
-| `apps/web/src/lib/view-models/`   | Browser connection ownership, actions, and reconnect snapshots                         |
-| `apps/web/src/lib/components/`    | Svelte presentation and accessible controls                                            |
-| `tests/e2e/`, `tests/fixtures/`   | Browser acceptance and the local provider fixture                                      |
+| Location                          | Responsibility                                                                                |
+| --------------------------------- | --------------------------------------------------------------------------------------------- |
+| `apps/server/`                    | The one deployable: composes the services by `ROLE`; boot, drain, `dev.ts`; integration tests |
+| `apps/web/`                       | SvelteKit app; built into a handler the server mounts                                         |
+| `packages/actors/`                | Counter, session, chat actors and the registry; server-owned rules and data                   |
+| `packages/entities/`              | User/organization/project/export actors, principals, access, `commit`, outbox                 |
+| `packages/api/`                   | Elysia routes as plugins; dependencies injected, no environment reads                         |
+| `packages/files/`                 | App file store: the api's bucket (`FILES_*`), a directory, or memory                          |
+| `packages/rivet-engine/`          | Engine node from `S3_*`, the local engine, namespace bootstrap                                |
+| `packages/rivet-edge/`            | The `/rivet` relay and scoped engine tokens (admin denied); the web → api forwarder           |
+| `packages/config/`                | Environment, `ROLE` presets, structured logging                                               |
+| `packages/wire/`                  | Browser-safe shared contracts, validation patterns, and limits                                |
+| `packages/rivetkit-svelte/`       | Reusable Svelte adapter, public API, and lifecycle tests                                      |
+| `packages/sveltekit-adapter-bun/` | Vendored SvelteKit adapter for Bun (excluded from Prettier)                                   |
+| `apps/web/src/lib/view-models/`   | Browser connection ownership, actions, and reconnect snapshots                                |
+| `apps/web/src/lib/components/`    | Svelte presentation and accessible controls                                                   |
+| `tests/e2e/`, `tests/fixtures/`   | Browser acceptance and the local provider fixture                                             |
 
 Package boundaries are enforced by `turbo boundaries` (part of `bun run validate`) through the `tags` in each package's `turbo.json`: `browser` packages (`wire`, `rivetkit-svelte`) may not depend on `server`, `actors` or `config` packages; `apps/web` may not depend on `server` packages and imports `@example/actors` for types only. New server code goes in the package that owns the concern, or a new package wired into `apps/server`; never into `apps/web`.
 
@@ -39,7 +40,7 @@ Run commands from the repository root. Use Bun 1.4.4 or newer (`engines` in `pac
 
 ```sh
 bun install --frozen-lockfile
-bun run dev                         # Vite :5173; Bun server :3001 (/api, /rivet); engine :6440
+bun run dev                         # Vite :5173; api :3001 (/api, /rivet; restarts on save); engine :6440 (.rivet/engine)
 bun run check                       # TypeScript and Svelte diagnostics
 bun run test                        # API and adapter unit tests
 bun run build                       # Adapter and production web build
@@ -86,8 +87,9 @@ bun run test:integration            # Real server + isolated engine, incl. resta
 
 - Infrastructure lives in `.railway/railway.ts` using the official `railway/iac` SDK. Read `.railway/README.md` and `docs/deployment.md` before changing deployment behavior. Do not add legacy `railway.json` or `railway.toml` files.
 - Confirm the linked project and environment with `railway status --json`, then review `bun run railway:plan`. Use a pinned plan for apply. Preserve existing resources and secrets; never automate destructive confirmation flags or log decrypted variables.
-- One root `Dockerfile` builds the single image (engine node + actors + API + web on :8080; `ROLE` selects all/app/engine). Keep `.env`, local engine data, and build artifacts out of the image context. Only port 8080 gets a public domain; never expose api_peer 6421, Guard 6420 or metrics.
-- Deploys rotate engine nodes. Keep overlap ≥120 s and drain ≥660 s in `.railway/railway.ts`; shorter windows lost quorum permanently in rehearsal. `S3_ENDPOINT` must be https.
+- One root `Dockerfile` builds the single image; `ROLE` selects web/api/engine (production, three services) or app/all. Web holds no secrets and forwards `/api` and `/rivet` to `API_URL`; the api holds `RIVET_TOKEN`, `ENTITY_SECRET` and the files bucket (`FILES_*`); the engine holds its own bucket (`S3_*`). Never put engine or file credentials on web. Keep `.env`, `.rivet/` and build artifacts out of the image context. Only port 8080 on `app` gets a public domain; never expose `api`, api_peer 6421, Guard 6420 or metrics.
+- Deploys of `engine` rotate engine nodes. Keep its overlap ≥120 s and drain ≥660 s in `.railway/railway.ts`; shorter windows lost quorum permanently in rehearsal. `S3_ENDPOINT` must be https. Rehearse with `deploy/rehearse-deploy.sh`.
+- Bytes that outlive a request (exports, uploads) go to `entityFiles()` / the `@example/files` store, never into actor SQLite or state; keep only the record in the actor.
 - Validate hosted changes with `bun run test:deployment <web-origin>`. It writes its own acceptance counter and uses no paid AI. Test persistence against the same actor before/after a restart; process health alone is insufficient.
 
 ## Adapter and tooling boundaries

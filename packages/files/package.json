@@ -1,0 +1,21 @@
+{
+  "name": "@example/files",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "App file storage: the api's own bucket in production, a directory in development.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "@example/config": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}

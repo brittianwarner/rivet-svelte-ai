@@ -1,3 +1,8 @@
+import {
+  createFileStore,
+  fileStoreConfig,
+  type FileStore,
+} from "@example/files";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   LIMITS,
@@ -40,6 +45,8 @@ export interface Session {
 
 interface EntityConfig {
   keys: Record<TokenKind, Buffer>;
+  /** Where entity actors keep file bytes (exports). Default: from FILES_*. */
+  files: FileStore | null;
   /** Extra transport check, such as the starter's origin and demo-token gate. */
   authorizeTransport?: (c: { request?: Request }, params: unknown) => void;
   /** How long a finished export can be downloaded. */
@@ -72,6 +79,8 @@ export function configureEntities(
     authorizeTransport?: EntityConfig["authorizeTransport"];
     /** Default: `ENTITY_EXPORT_TTL_SECONDS`, or one hour. */
     exportTtlMs?: number;
+    /** Default: the store FILES_* describes (`@example/files`). */
+    files?: FileStore;
   } = {},
 ): void {
   const secret = next.secret?.trim();
@@ -83,7 +92,15 @@ export function configureEntities(
     authorizeTransport: next.authorizeTransport ?? config?.authorizeTransport,
     exportTtlMs:
       next.exportTtlMs ?? config?.exportTtlMs ?? defaultExportTtlMs(),
+    files: next.files ?? config?.files ?? null,
   };
+}
+
+/** The file store entity actors write to. Configured, else from FILES_*. */
+export function entityFiles(): FileStore {
+  const entry = current();
+  entry.files ??= createFileStore(fileStoreConfig());
+  return entry.files;
 }
 
 /** How long a finished export can be downloaded. */

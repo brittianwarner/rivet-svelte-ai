@@ -2,11 +2,13 @@
  * The composition root. Each service lives in its own package; ROLE picks
  * which of them this process runs (see `servicesFor` in @example/config):
  *
- *   engine  @example/rivet-engine  engine node from S3_*, namespace bootstrap
+ *   engine  @example/rivet-engine  an S3-backed cluster node, or a local node
  *   actors  @example/actors        runner: registers with the engine, runs actors
- *   front   @example/api           /api/*   (Elysia)
+ *   api     @example/api           /api/*   (Elysia)
  *           @example/rivet-edge    /rivet/* (gateway relay, admin denied)
- *           @example/web           everything else (SvelteKit, Bun adapter)
+ *   web     @example/web           pages (SvelteKit, Bun adapter); with no api
+ *                                  in this process, /api and /rivet are
+ *                                  forwarded to API_URL
  *
  * Boot: engine → namespace + pool → HTTP listener (liveness only) → runner
  * registers → readiness flips to 200.
@@ -31,6 +33,8 @@ import { createApi, entityRoutes } from "@example/api";
 import {
   actorToken,
   allowedOrigins,
+  apiUrl,
+  engineDataDir,
   enginePort,
   loadRootEnv,
   log,
@@ -41,14 +45,16 @@ import {
   type RivetTarget,
 } from "@example/config";
 import {
-  deriveTrustedClientIp,
   createEngineTokenMinter,
+  createForwarder,
   createRivetGatewayProxy,
+  deriveTrustedClientIp,
   type WsConnData,
 } from "@example/rivet-edge";
 import {
   bootstrapNamespace,
   startEngineNode,
+  startLocalEngine,
   type EngineHandle,
 } from "@example/rivet-engine";
 
@@ -62,7 +68,7 @@ interface WebHandler {
 
 /** The web build is optional: in development Vite serves the pages. */
 async function loadWeb(): Promise<WebHandler | null> {
-  // `none` serves /api and /rivet only (tests, or a separate web tier).
+  // `none` skips the pages (tests).
   if (process.env.WEB_HANDLER === "none") return null;
   const path =
     process.env.WEB_HANDLER ||
@@ -116,6 +122,10 @@ function listenAddress(): { port: number; hostname: string } {
 
 /** ROLE=engine: only the node. Guard serves /health on 6420 for the platform. */
 async function runEngineOnly(target: RivetTarget): Promise<void> {
+  if (!process.env.S3_BUCKET?.trim())
+    throw new Error(
+      "ROLE=engine is a cluster node: set S3_BUCKET and the other S3_* values.",
+    );
   if (!target.adminToken)
     throw new Error("Set RIVET_TOKEN (the engine admin token).");
   const engine = await startEngineNode({
@@ -133,128 +143,164 @@ async function runEngineOnly(target: RivetTarget): Promise<void> {
   process.exit(code || 1);
 }
 
-/** Front-only replicas have no runner: ready means the engine answers. */
-function engineReachable(endpoint: string): () => Promise<boolean> {
-  let checkedAt = 0;
-  let last = false;
-  return async () => {
-    if (Date.now() - checkedAt < 2000) return last;
-    checkedAt = Date.now();
-    try {
-      const response = await fetch(`${endpoint}/health`, {
-        signal: AbortSignal.timeout(1500),
-      });
-      last = response.ok;
-    } catch {
-      last = false;
-    }
-    return last;
-  };
+const production = process.env.NODE_ENV === "production";
+/** How long a stopping replica lets in-flight requests finish. */
+const HTTP_DRAIN_MS = production ? 10_000 : 500;
+
+/**
+ * Stop accepting, let in-flight requests finish, then close what is left.
+ * `server.stop()` alone never resolves while a socket is open, so without the
+ * second step a replica with live browsers would never reach its actor drain.
+ * Closed sockets reconnect through another replica.
+ */
+async function stopListening(server: Server<WsConnData>): Promise<void> {
+  await Promise.race([server.stop(), Bun.sleep(HTTP_DRAIN_MS)]);
+  await server.stop(true);
+}
+
+/**
+ * ROLE=web: pages, plus /api and /rivet forwarded to the api service over the
+ * private network. No engine, no actors, no secrets. Scale it on page load.
+ */
+async function runWeb(): Promise<void> {
+  const upstream = apiUrl();
+  const web = await loadWeb();
+  if (!web && process.env.WEB_HANDLER !== "none")
+    throw new Error("ROLE=web needs the web build: run `bun run build`.");
+  const forwarder = createForwarder({ upstream });
+  let accepting = true;
+  const server = Bun.serve<WsConnData>({
+    ...listenAddress(),
+    development: false,
+    idleTimeout: 255,
+    routes: {
+      ...(web?.routes as object | undefined),
+      // This replica's own liveness: never depends on the api.
+      "/healthz": () =>
+        Response.json({ ok: accepting }, { status: accepting ? 200 : 503 }),
+      "/rivet/*": (request: Request, srv: Server<WsConnData>) => {
+        srv.timeout(request, 0);
+        return forwarder.handle(request, srv);
+      },
+      "/api/*": (request: Request, srv: Server<WsConnData>) =>
+        forwarder.handle(request, srv),
+    },
+    fetch: (request, srv) =>
+      web
+        ? web.fetch(request, srv as unknown as Server<undefined>)
+        : new Response("Not found", { status: 404 }),
+    websocket: forwarder.websocket,
+    error(error) {
+      log.error("unhandled request error", { error: error.message });
+      return new Response("Internal Server Error", { status: 500 });
+    },
+  });
+  log.info("listening", {
+    url: server.url.href,
+    role: "web",
+    web: web !== null,
+    api: upstream,
+  });
+  onSignals(async (signal) => {
+    accepting = false;
+    log.info("stopping", { signal, pendingRequests: server.pendingRequests });
+    await stopListening(server);
+  });
+}
+
+async function startEngine(target: RivetTarget): Promise<EngineHandle> {
+  if (!target.adminToken)
+    throw new Error("Set RIVET_TOKEN (the engine admin token).");
+  if (process.env.S3_BUCKET?.trim()) {
+    return startEngineNode({
+      adminToken: target.adminToken,
+      guardHost: "127.0.0.1",
+    });
+  }
+  // No bucket: one node with its data on this machine.
+  if (process.env.NODE_ENV === "production")
+    log.warn(
+      "no S3_BUCKET: running a single local engine; data is lost with the container",
+    );
+  return startLocalEngine({
+    dir: engineDataDir(),
+    port: enginePort(),
+    adminToken: target.adminToken,
+  });
 }
 
 export async function main(): Promise<void> {
   loadRootEnv();
   const mode = role();
   const run = servicesFor(mode);
-  const target = rivetTarget();
+  if (!run.engine && !run.actors && !run.api) return runWeb();
 
-  if (run.engine && !run.actors && !run.front) return runEngineOnly(target);
-  if (run.engine && !target.spawnLocal) {
+  const target = rivetTarget();
+  if (run.engine && !run.actors) return runEngineOnly(target);
+  if (run.engine && !target.local) {
     throw new Error(
-      `ROLE=${mode} runs its own engine; unset RIVET_ENDPOINT (or use ROLE=app).`,
+      `ROLE=${mode} runs its own engine; unset RIVET_ENDPOINT (or use ROLE=api).`,
     );
   }
-  if (!run.engine && target.spawnLocal) {
+  if (!run.engine && target.local) {
     throw new Error(
       `ROLE=${mode} needs RIVET_ENDPOINT: the engine runs in another service.`,
     );
   }
 
-  let engine: EngineHandle | null = null;
-  if (run.engine && process.env.S3_BUCKET) {
-    if (!target.adminToken)
-      throw new Error("Set RIVET_TOKEN (the engine admin token).");
-    engine = await startEngineNode({
-      adminToken: target.adminToken,
-      guardHost: "127.0.0.1",
-    });
-    target.endpoint = engine.endpoint;
-    target.spawnLocal = false;
-  }
-  // ROLE=all without S3_BUCKET: RivetKit spawns a single development engine.
+  const engine = run.engine ? await startEngine(target) : null;
+  if (engine) target.endpoint = engine.endpoint;
 
-  if (!target.spawnLocal && target.adminToken) {
+  if (target.adminToken) {
     const ready = await bootstrapNamespace({
       endpoint: target.endpoint,
       adminToken: target.adminToken,
       namespace: target.namespace,
       pool: target.pool,
+      // A local engine elects its partition in well under a second.
+      ...(production ? {} : { delayMs: 250, attempts: 240 }),
     });
     if (!ready.success)
       throw new Error(`Rivet namespace bootstrap failed: ${ready.error}`);
   }
 
-  // Actors verify principals; the front signs them. Both need the secret.
+  // Actors verify principals and keep files; the API signs principals.
   configureEntityAuth();
 
   const version = await releaseVersion();
-  const registry = run.actors
-    ? createRegistry({
-        ...(target.spawnLocal
-          ? {}
-          : {
-              endpoint: target.endpoint,
-              token: target.adminToken ?? undefined,
-            }),
-        namespace: target.namespace,
-        pool: target.pool,
-        version,
-        localEnginePort: enginePort(),
-        // Chat spends model budget: host it only when a provider is set.
-        chat: chooseProvider().provider !== "none",
-      })
-    : null;
+  const registry = createRegistry({
+    endpoint: target.endpoint,
+    token: target.adminToken ?? undefined,
+    namespace: target.namespace,
+    pool: target.pool,
+    version,
+    // Development: a reload waits seconds, not the engine's stop threshold.
+    ...(production ? {} : { shutdownGraceMs: 3_000 }),
+    // Chat spends model budget: host it only when a provider is set.
+    chat: chooseProvider().provider !== "none",
+  });
 
   let runnerReady = false;
-  const ready = run.actors
-    ? () => runnerReady
-    : engineReachable(target.endpoint);
-
-  const front = run.front ? await createFront(target, ready) : null;
-  const server = front
-    ? Bun.serve<WsConnData>({
-        ...listenAddress(),
-        development: false,
-        idleTimeout: 255,
-        routes: front.routes,
-        fetch: front.fetch,
-        websocket: front.websocket,
-        error(error) {
-          log.error("unhandled request error", { error: error.message });
-          return new Response("Internal Server Error", { status: 500 });
-        },
-      })
-    : // ROLE=runner: no public surface, just the platform's health checks.
-      Bun.serve({
-        ...listenAddress(),
-        development: false,
-        routes: {
-          "/api/health": () => Response.json({ ok: true }),
-          "/api/health/actors": () =>
-            Response.json(
-              { ok: runnerReady },
-              { status: runnerReady ? 200 : 503 },
-            ),
-        },
-        fetch: () => new Response("Not found", { status: 404 }),
-      });
+  const front = await createFront(target, () => runnerReady, run.web);
+  const server = Bun.serve<WsConnData>({
+    ...listenAddress(),
+    development: false,
+    idleTimeout: 255,
+    routes: front.routes,
+    fetch: front.fetch,
+    websocket: front.websocket,
+    error(error) {
+      log.error("unhandled request error", { error: error.message });
+      return new Response("Internal Server Error", { status: 500 });
+    },
+  });
   log.info("listening", {
     url: server.url.href,
     role: mode,
     services: Object.entries(run)
       .filter(([, on]) => on)
       .map(([name]) => name),
-    web: front?.hasWeb ?? false,
+    web: front.hasWeb,
     version,
     engine: target.endpoint,
   });
@@ -264,10 +310,17 @@ export async function main(): Promise<void> {
     shuttingDown = true;
     log.info("stopping", { signal, pendingRequests: server.pendingRequests });
     runnerReady = false;
-    await server.stop();
-    await front?.dispose();
-    await registry?.shutdown();
-    await engine?.stop();
+    const started = performance.now();
+    const elapsed = () => Math.round(performance.now() - started);
+    await stopListening(server);
+    await front.dispose();
+    log.info("stopped listening", { ms: elapsed() });
+    await registry.shutdown();
+    log.info("actors drained", { ms: elapsed() });
+    if (engine) {
+      await engine.stop();
+      log.info("engine stopped", { ms: elapsed() });
+    }
   });
 
   // A dead engine leaves the runner with nowhere to go: restart the container.
@@ -277,15 +330,13 @@ export async function main(): Promise<void> {
     process.exit(1);
   });
 
-  if (registry) {
-    await registry.startAndWait();
-    runnerReady = true;
-    const choice = chooseProvider();
-    log.info("actors ready", {
-      provider: choice.provider,
-      model: choice.modelId,
-    });
-  }
+  await registry.startAndWait();
+  runnerReady = true;
+  const choice = chooseProvider();
+  log.info("actors ready", {
+    provider: choice.provider,
+    model: choice.modelId,
+  });
 }
 
 interface Front {
@@ -299,10 +350,11 @@ interface Front {
   dispose(): Promise<void>;
 }
 
-/** The public port: web, /api and the /rivet edge. Stateless; scale freely. */
+/** /api and the /rivet edge, plus the pages when this process serves them. */
 async function createFront(
   target: RivetTarget,
   ready: () => boolean | Promise<boolean>,
+  withWeb: boolean,
 ): Promise<Front> {
   const origins = allowedOrigins();
   const publicOrigin = process.env.PUBLIC_ORIGIN?.trim() || undefined;
@@ -354,7 +406,7 @@ async function createFront(
       : {}),
   });
 
-  const web = await loadWeb();
+  const web = withWeb ? await loadWeb() : null;
   return {
     routes: {
       ...(web?.routes as object | undefined),

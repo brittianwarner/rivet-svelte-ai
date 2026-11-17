@@ -15,6 +15,7 @@
     "@ai-sdk/google": "^4.0.112",
     "@example/config": "workspace:*",
     "@example/entities": "workspace:*",
+    "@example/files": "workspace:*",
     "@example/wire": "workspace:*",
     "@openrouter/ai-sdk-provider": "^3.1.0",
     "ai": "^7.0.163",

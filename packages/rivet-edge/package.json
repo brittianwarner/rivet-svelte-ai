@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The /rivet relay: browser gateway traffic in, engine admin routes out.",
+  "description": "The /rivet relay (browser gateway traffic in, engine admin routes out) and the web-to-api forwarder.",
   "exports": {
     ".": "./src/index.ts"
   },

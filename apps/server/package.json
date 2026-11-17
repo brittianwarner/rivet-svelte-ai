@@ -5,7 +5,7 @@
   "type": "module",
   "description": "The one deployable: composes engine, actors, API, /rivet edge and web by ROLE.",
   "scripts": {
-    "dev": "bun --watch src/main.ts",
+    "dev": "bun src/dev.ts",
     "check": "tsc --noEmit",
     "start": "bun src/main.ts",
     "test:integration": "bun test --timeout 200000 tests"

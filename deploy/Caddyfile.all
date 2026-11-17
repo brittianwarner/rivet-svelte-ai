@@ -1,0 +1,9 @@
+# Local stand-in for Railway's edge in front of ROLE=all replicas.
+:8080 {
+	reverse_proxy app1:8080 app2:8080 app3:8080 {
+		lb_policy round_robin
+		health_uri /api/health/actors
+		health_interval 2s
+		fail_duration 5s
+	}
+}

@@ -33,44 +33,61 @@ export function portFromEnv(
   return port;
 }
 
-/** Port of the engine RivetKit spawns in local development. */
+/**
+ * Port of the local engine (development, tests, and ROLE=all without a
+ * bucket). Guard listens here; api_peer and metrics take the next two ports.
+ */
 export function enginePort(): number {
-  return portFromEnv(process.env.RIVET_RUN_ENGINE_PORT, 6440);
+  return portFromEnv(process.env.ENGINE_PORT, 6440);
+}
+
+/** The admin token of a local engine. It only ever binds 127.0.0.1. */
+export const LOCAL_ENGINE_TOKEN = "local-dev-token";
+
+/** Where a local engine keeps its data: ENGINE_DATA_DIR, or `<repo>/.rivet/engine`. */
+export function engineDataDir(): string {
+  return (
+    process.env.ENGINE_DATA_DIR?.trim() ||
+    fileURLToPath(new URL("../../../.rivet/engine", import.meta.url))
+  );
 }
 
 /**
  * What this process runs. One image, five presets:
  *
- * | ROLE           | engine | actors | front (web + /api + /rivet) |
- * | -------------- | ------ | ------ | --------------------------- |
- * | `all` (default)|   ✓    |   ✓    |              ✓              |
- * | `app`          |        |   ✓    |              ✓              |
- * | `engine`       |   ✓    |        |                             |
- * | `runner`       |        |   ✓    |                             |
- * | `front`        |        |        |              ✓              |
+ * | ROLE           | engine | actors | api (/api + /rivet) | web (pages) |
+ * | -------------- | ------ | ------ | ------------------- | ----------- |
+ * | `all` (default)|   ✓    |   ✓    |          ✓          |      ✓      |
+ * | `app`          |        |   ✓    |          ✓          |      ✓      |
+ * | `engine`       |   ✓    |        |                     |             |
+ * | `api`          |        |   ✓    |          ✓          |             |
+ * | `web`          |        |        |      forwarded      |      ✓      |
  *
- * `all` is the single container. Split along these seams when one part needs
- * to scale on its own: engine nodes hold state, runners execute actors, front
- * replicas serve HTTP and sockets. Every role except `all` and `engine` needs
- * RIVET_ENDPOINT.
+ * `all` is the single container. The three-service layout is `web` + `api` +
+ * `engine`: web replicas render pages and forward /api and /rivet to the api
+ * over the private network; api replicas run the actors and the API; engine
+ * nodes hold the state. `app` and `api` need RIVET_ENDPOINT, `web` needs
+ * API_URL. See docs/deployment.md.
  */
-export type Role = "all" | "app" | "engine" | "runner" | "front";
+export type Role = "all" | "app" | "engine" | "api" | "web";
 
 export interface Services {
   /** A Rivet engine node (storage, Guard, gateway). */
   engine: boolean;
   /** The actor runner: registers with the engine and executes actors. */
   actors: boolean;
-  /** The public port: SvelteKit, /api and the /rivet edge. */
-  front: boolean;
+  /** /api (Elysia) and the /rivet edge. */
+  api: boolean;
+  /** The SvelteKit pages. */
+  web: boolean;
 }
 
 const PRESETS: Record<Role, Services> = {
-  all: { engine: true, actors: true, front: true },
-  app: { engine: false, actors: true, front: true },
-  engine: { engine: true, actors: false, front: false },
-  runner: { engine: false, actors: true, front: false },
-  front: { engine: false, actors: false, front: true },
+  all: { engine: true, actors: true, api: true, web: true },
+  app: { engine: false, actors: true, api: true, web: true },
+  engine: { engine: true, actors: false, api: false, web: false },
+  api: { engine: false, actors: true, api: true, web: false },
+  web: { engine: false, actors: false, api: false, web: true },
 };
 
 export function role(): Role {
@@ -88,23 +105,44 @@ export function servicesFor(value: Role): Services {
 export interface RivetTarget {
   /** Where the actor runner and the gateway proxy reach the engine. */
   endpoint: string;
-  /** Engine admin token. Absent only for the local development engine. */
+  /** Engine admin token. Null only for an external engine without auth. */
   adminToken: string | null;
   namespace: string;
   pool: string;
-  /** True when RivetKit spawns a development engine for us. */
-  spawnLocal: boolean;
+  /** True when RIVET_ENDPOINT is unset: this process starts a local engine. */
+  local: boolean;
 }
 
 export function rivetTarget(): RivetTarget {
   const endpoint = process.env.RIVET_ENDPOINT?.trim();
+  const token = process.env.RIVET_TOKEN?.trim();
   return {
     endpoint: endpoint || `http://127.0.0.1:${enginePort()}`,
-    adminToken: process.env.RIVET_TOKEN?.trim() || null,
+    adminToken: token || (endpoint ? null : LOCAL_ENGINE_TOKEN),
     namespace: process.env.RIVET_NAMESPACE?.trim() || "default",
     pool: process.env.RIVET_POOL?.trim() || "default",
-    spawnLocal: !endpoint,
+    local: !endpoint,
   };
+}
+
+/**
+ * ROLE=web: the api service's private base URL, e.g.
+ * `http://api.railway.internal:8080`. No path, no credentials.
+ */
+export function apiUrl(): string {
+  const value = process.env.API_URL?.trim();
+  if (!value)
+    throw new Error("ROLE=web needs API_URL (the api service's private URL).");
+  const url = new URL(value);
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    throw new Error("API_URL must be an http(s) URL.");
+  if (
+    url.username ||
+    url.password ||
+    (url.pathname !== "/" && url.pathname !== "")
+  )
+    throw new Error("API_URL must be a bare origin: no path or credentials.");
+  return url.origin;
 }
 
 /**

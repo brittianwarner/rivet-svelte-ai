@@ -6,9 +6,9 @@ Build apps that stay in sync with **RivetKit 3.1.1**, **Bun + Elysia**, **Svelte
 
 This is a community-built starter with a workspace Svelte adapter. The learning page renders on the server; actor connections open in the browser. An optional streaming chat implementation is included in the repository.
 
-- A local Rivet engine starts automatically. No Docker, account, or AI key needed for the counter.
-- One Bun server serves the web app, `/api` and the `/rivet` actor edge on one port. In production the same container also runs the engine node; it needs only an S3 bucket.
-- A Turborepo workspace: each service is a package, and `ROLE` splits the same image into engine, runner and front tiers when one needs to scale on its own.
+- `bun run dev` runs the production layout on your machine: a local Rivet engine, the API, and the web app. Saving server code restarts the API in about a second; actor state survives. No Docker, account, or AI key needed for the counter.
+- Production is one image as three services: **web** (pages, public), **api** (actors, `/api`, `/rivet`, private) and a 3-node Rivet **engine** cluster (private). The engine and the api each have their own S3 bucket. Pages never share a thread with actors.
+- A Turborepo workspace: each service is a package, and `ROLE` picks which ones a container runs.
 - Actor actions and events stay typed from the API registry to Svelte.
 - Each actor has its own SQLite database; each browser provider owns its client and cleans it up.
 - A `/data` browser shows a full app: sign-in, organizations, roles, invitations, projects, tasks, comments, presence, CSV exports, deletion, and paged history.
@@ -28,7 +28,7 @@ bun run dev
 
 Open **http://127.0.0.1:5173**. Click **+ Increment**, then open a second tab. Your browser gets a session actor that remembers the counters you create. **Add actor** creates an independent counter in that session; another tab in the same browser restores the same registry. **+ Via HTTP** reaches the selected counter through the API. Use **Actor key → Connect** to attach a known counter to your session.
 
-The first install/start needs internet access for dependencies and the native engine. The default ports are 5173 (Vite), 3001 (the Bun server: `/api` and `/rivet`; Vite proxies both) and 6440 (the local engine). The local Services/agentOS host is disabled because these examples do not use it.
+The first install/start needs internet access for dependencies and the native engine. The default ports are 5173 (Vite, the web app), 3001 (the api: `/api` and `/rivet`; Vite forwards both, as the web service does in production) and 6440 (the local engine). Engine data lives in `.rivet/engine` and app files in `.rivet/files`; delete `.rivet` to start fresh. Each checkout runs its own engine, so two clones can run side by side with different `ENGINE_PORT` and `PORT`. The local Services/agentOS host is disabled because these examples do not use it.
 
 ## Your playground session
 
@@ -86,7 +86,8 @@ This is a bounded conversation example: at most 40 recent messages / 64 KiB of s
 apps/
   server/                   # The one deployable: composes the packages by ROLE
     src/server.ts           # Boot, routing (/rivet, /api, web), drain
-    tests/                  # Real-engine integration, split tiers, smoke, deployment
+    src/dev.ts              # `bun run dev`: local engine + api that restarts on save
+    tests/                  # Real-engine integration, web→api split, smoke, deployment
   web/                      # SvelteKit app; the server mounts its build
     src/lib/view-models/    # Reactive state, actions, and reconnect snapshots
     src/lib/components/     # Provider, connection loader, playground panels
@@ -94,8 +95,9 @@ packages/
   actors/                   # counter, session, chat actors + the registry
   entities/                 # User, organization, project, export actors; commit + outbox
   api/                      # Elysia routes as plugins (no env reads)
-  rivet-engine/             # Engine node from S3_*, namespace bootstrap
-  rivet-edge/               # The /rivet relay; engine admin denied
+  files/                    # App files: the api's bucket, a directory, or memory
+  rivet-engine/             # Engine node from S3_*, the local engine, namespace bootstrap
+  rivet-edge/               # The /rivet relay (engine admin denied); web → api forwarder
   config/                   # Environment, ROLE presets, logging
   wire/                     # Browser-safe contracts and limits
   rivetkit-svelte/          # Workspace Svelte adapter and its tests
@@ -120,12 +122,12 @@ Read [architecture and scaling](docs/architecture.md), [deployment](docs/deploym
 
 | Command                       | Purpose                                                                 |
 | ----------------------------- | ----------------------------------------------------------------------- |
-| `bun run dev`                 | Watch both apps and run the local engine                                |
+| `bun run dev`                 | Local engine + api (restarts on save) + web (hot reload)                |
 | `bun run check`               | TypeScript and Svelte diagnostics                                       |
 | `bun run test`                | API boundaries, limits, provider selection, and adapter lifecycle tests |
 | `bun run build`               | Package adapter and build the SvelteKit app for the Bun server          |
 | `bun run validate`            | Checks, unit tests, and production build                                |
-| `bun run test:integration`    | Real server + isolated engine: edge, actors, entities, chat, restart    |
+| `bun run test:integration`    | Real server + isolated engine: edge, actors, entities, web→api, restart |
 | `bun run test:e2e:production` | Build and run the same browser suites against the production Bun server |
 | `bun run test:deployment URL` | Acceptance against a deployed origin; no AI spending                    |
 | `bun run test:e2e`            | Real Chromium tests with a local provider fixture; no paid calls        |
@@ -134,25 +136,27 @@ Read [architecture and scaling](docs/architecture.md), [deployment](docs/deploym
 
 Before the first browser test, run `bunx playwright install chromium` (on Linux CI: `bunx playwright install --with-deps chromium`). Browser tests use a temporary engine data directory and start their own processes on ports 5174, 3002, 6540, 6541, and 6542. They test the counter homepage, the `/data` browser with two people sharing an organization live (invite, accept, projects, tasks, comments, presence, a CSV download, task and project deletion, removal closing access), session restoration and isolation, idempotent actor creation, native CSS 3D actor controls, two-tab socket/HTTP updates, mobile touch and keyboard flows, response ownership, connection retry, and input limits. A separate local provider fixture verifies the optional chat actor’s streamed socket events, cancellation, provider failure/retry, and conversation isolation. They do not call a paid model.
 
-`bun run test:integration` starts an isolated engine and the real server (on its own ports and temp directory) and talks to it only through the public `/rivet` edge, the way a browser does. It covers the edge's admin denials and origin check, counter actions and events, the entity actors (refused unsigned principals, token expiry and reconnect, the reserved `system` id, server-only actions, write limits, paged comments, presence, the export workflow and its expiry, project deletion), the chat and session actors with the local model fixture, and state across a server restart. Set `KEEP_HARNESS_DIAGNOSTICS=1` to keep its logs.
+`bun run test:integration` starts an isolated engine and the real server (on its own ports and temp directory) and talks to it only through the public `/rivet` edge, the way a browser does; `split.test.ts` runs api and web as separate processes and does the same through web. It covers the edge's admin denials and origin check, counter actions and events, the entity actors (refused unsigned principals, token expiry and reconnect, the reserved `system` id, server-only actions, write limits, paged comments, presence, the export workflow and its expiry, project deletion), the chat and session actors with the local model fixture, and state across a server restart. Set `KEEP_HARNESS_DIAGNOSTICS=1` to keep its logs.
 
 ## Configuration
 
 The root `.env` is optional; existing environment values win. [`.env.example`](.env.example) lists every variable. The common ones:
 
-| Variable                                           | Default / purpose                                                                 |
-| -------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `PORT`, `HOST`                                     | `3001`, `127.0.0.1`; the image uses `8080` and `::`                               |
-| `ROLE`                                             | `all`, `app`, `engine`, `runner` or `front`; see [deployment](docs/deployment.md) |
-| `PUBLIC_ORIGIN`, `WEB_ORIGINS`                     | Public site origin, plus extra allowed browser origins (local Vite by default)    |
-| `RIVET_RUN_ENGINE_PORT`                            | `6440`; the local development engine                                              |
-| `RIVET_ENDPOINT`, `RIVET_TOKEN`, `RIVET_NAMESPACE` | Server-only engine connection. Unset locally                                      |
-| `S3_*`                                             | The bucket the production engine cluster runs on (https only)                     |
-| `ENTITY_SECRET`                                    | Derives the token keys; required in production, identical on every replica        |
-| `ENTITY_EXPORT_TTL_SECONDS`                        | `3600`; how long a CSV export is kept before its actor deletes it                 |
-| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`           | Optional OpenRouter provider                                                      |
-| `GOOGLE_GENERATIVE_AI_API_KEY`, `GEMINI_MODEL`     | Optional Gemini provider                                                          |
-| `ACTOR_TOKEN`                                      | Optional **public demo parameter**, returned to the browser; not authentication   |
+| Variable                                           | Default / purpose                                                               |
+| -------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `PORT`, `HOST`                                     | `3001`, `127.0.0.1`; the image uses `8080` and `::`                             |
+| `ROLE`                                             | `all`, `app`, `engine`, `api` or `web`; see [deployment](docs/deployment.md)    |
+| `PUBLIC_ORIGIN`, `WEB_ORIGINS`                     | Public site origin, plus extra allowed browser origins (local Vite by default)  |
+| `ENGINE_PORT`, `ENGINE_DATA_DIR`                   | `6440`, `.rivet/engine`; the local development engine                           |
+| `API_URL`                                          | `ROLE=web`: the api service's private origin                                    |
+| `RIVET_ENDPOINT`, `RIVET_TOKEN`, `RIVET_NAMESPACE` | Server-only engine connection. Unset locally                                    |
+| `S3_*`                                             | The engine cluster's bucket (https only)                                        |
+| `FILES_*`                                          | The api's bucket for app files; `.rivet/files` locally                          |
+| `ENTITY_SECRET`                                    | Derives the token keys; required in production, identical on every replica      |
+| `ENTITY_EXPORT_TTL_SECONDS`                        | `3600`; how long a CSV export is kept before its actor deletes it               |
+| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`           | Optional OpenRouter provider                                                    |
+| `GOOGLE_GENERATIVE_AI_API_KEY`, `GEMINI_MODEL`     | Optional Gemini provider                                                        |
+| `ACTOR_TOKEN`                                      | Optional **public demo parameter**, returned to the browser; not authentication |
 
 The server exposes `/api/health` (liveness), `/api/health/actors` (runner registered; the deploy gate), `/api/ready` (provider configuration), `/api/client-config`, and `POST /api/counters/:name/increment` with JSON `{ "by": 1 }`. Browsers open actor sockets through `/rivet` on the same origin; the relay denies engine administration and never forwards the engine token.
 
@@ -163,6 +167,7 @@ The server exposes `/api/health` (liveness), `/api/health/actors` (runner regist
 | Symptom                                  | Check                                                                                       |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------- |
 | “Your playground is almost ready”        | Start the server (`bun run dev`); check port 3001; use **Try connection again**             |
+| "already in use by another engine"       | Another checkout's engine holds the data dir or port: set `ENGINE_PORT` / `ENGINE_DATA_DIR` |
 | Socket never connects                    | Check server logs, free ports, and that the page origin is in `PUBLIC_ORIGIN`/`WEB_ORIGINS` |
 | Boot hangs: "config operation timed out" | `S3_ENDPOINT` must be https and reachable; see [deployment](docs/deployment.md)             |
 | AI disabled                              | Set one provider key in root `.env`, restart the API, and reload                            |
@@ -178,4 +183,4 @@ MIT for the starter. `packages/rivetkit-svelte` is Apache-2.0; preserve its lice
 
 ## Deploy to Railway
 
-One image, three replicas, one bucket, via [Railway infrastructure as code](.railway/railway.ts). Each replica is a Rivet engine node plus the app. The [deployment guide](docs/deployment.md) covers roles, the `all`/`split` topologies, deploy overlap and drain, the rehearsed rotation results, and the risks you accept. No Rivet Cloud account or AI key is required.
+One image, three services, two buckets, via [Railway infrastructure as code](.railway/railway.ts): `app` (web, public), `api` (private) and `engine` (3 nodes, private). The [deployment guide](docs/deployment.md) covers roles, the `split`/`all` topologies, deploy overlap and drain, the rehearsed rotation and load results, and the risks you accept. No Rivet Cloud account or AI key is required.

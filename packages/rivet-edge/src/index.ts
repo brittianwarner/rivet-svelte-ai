@@ -1,6 +1,7 @@
 /**
  * The /rivet edge. Browsers reach actors through it on the site's own origin;
  * engine administration is denied and the admin token never leaves the server.
+ * The forwarder carries /api and /rivet from the web service to the api.
  */
 export {
   classifyProxyPath,
@@ -17,3 +18,15 @@ export {
   type EngineCredentialProvider,
   type EngineTokenMinterOptions,
 } from "./engine-token.ts";
+export {
+  createForwarder,
+  createUpstreamPool,
+  type Forwarder,
+  type ForwarderOptions,
+  type UpstreamPool,
+} from "./forwarder.ts";
+export {
+  createSocketRelay,
+  type SocketRelay,
+  type SocketRelayOptions,
+} from "./relay.ts";
