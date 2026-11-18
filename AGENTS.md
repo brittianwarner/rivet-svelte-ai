@@ -41,6 +41,7 @@ Run commands from the repository root. Use Bun 1.4.4 or newer (`engines` in `pac
 ```sh
 bun install --frozen-lockfile
 bun run dev                         # Vite :5173; api :3001 (/api, /rivet; restarts on save); engine :6440 (.rivet/engine)
+WEB_PORT=5183 PORT=3011 ENGINE_PORT=6470 bun run dev   # beside another checkout
 bun run check                       # TypeScript and Svelte diagnostics
 bun run test                        # API and adapter unit tests
 bun run build                       # Adapter and production web build

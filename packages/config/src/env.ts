@@ -41,6 +41,11 @@ export function enginePort(): number {
   return portFromEnv(process.env.ENGINE_PORT, 6440);
 }
 
+/** Vite's port in development (apps/web). */
+export function webPort(): number {
+  return portFromEnv(process.env.WEB_PORT, 5173);
+}
+
 /** The admin token of a local engine. It only ever binds 127.0.0.1. */
 export const LOCAL_ENGINE_TOKEN = "local-dev-token";
 
@@ -153,7 +158,8 @@ export function apiUrl(): string {
 export function allowedOrigins(): string[] {
   const listed = [
     process.env.PUBLIC_ORIGIN,
-    process.env.WEB_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173",
+    process.env.WEB_ORIGINS ||
+      `http://localhost:${webPort()},http://127.0.0.1:${webPort()}`,
   ]
     .join(",")
     .split(",")

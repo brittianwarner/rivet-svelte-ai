@@ -28,7 +28,7 @@ bun run dev
 
 Open **http://127.0.0.1:5173**. Click **+ Increment**, then open a second tab. Your browser gets a session actor that remembers the counters you create. **Add actor** creates an independent counter in that session; another tab in the same browser restores the same registry. **+ Via HTTP** reaches the selected counter through the API. Use **Actor key → Connect** to attach a known counter to your session.
 
-The first install/start needs internet access for dependencies and the native engine. The default ports are 5173 (Vite, the web app), 3001 (the api: `/api` and `/rivet`; Vite forwards both, as the web service does in production) and 6440 (the local engine). Engine data lives in `.rivet/engine` and app files in `.rivet/files`; delete `.rivet` to start fresh. Each checkout runs its own engine, so two clones can run side by side with different `ENGINE_PORT` and `PORT`. The local Services/agentOS host is disabled because these examples do not use it.
+The first install/start needs internet access for dependencies and the native engine. The default ports are 5173 (Vite, the web app), 3001 (the api: `/api` and `/rivet`; Vite forwards both, as the web service does in production) and 6440 (the local engine). Engine data lives in `.rivet/engine` and app files in `.rivet/files`; delete `.rivet` to start fresh. Each checkout runs its own engine, so two clones can run side by side with different `WEB_PORT`, `PORT` and `ENGINE_PORT`. The local Services/agentOS host is disabled because these examples do not use it.
 
 ## Your playground session
 
@@ -148,6 +148,7 @@ The root `.env` is optional; existing environment values win. [`.env.example`](.
 | `ROLE`                                             | `all`, `app`, `engine`, `api` or `web`; see [deployment](docs/deployment.md)    |
 | `PUBLIC_ORIGIN`, `WEB_ORIGINS`                     | Public site origin, plus extra allowed browser origins (local Vite by default)  |
 | `ENGINE_PORT`, `ENGINE_DATA_DIR`                   | `6440`, `.rivet/engine`; the local development engine                           |
+| `WEB_PORT`                                         | `5173`; Vite in development. Allowed browser origins follow it                  |
 | `API_URL`                                          | `ROLE=web`: the api service's private origin                                    |
 | `RIVET_ENDPOINT`, `RIVET_TOKEN`, `RIVET_NAMESPACE` | Server-only engine connection. Unset locally                                    |
 | `S3_*`                                             | The engine cluster's bucket (https only)                                        |

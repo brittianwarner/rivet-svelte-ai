@@ -20,7 +20,8 @@ export default defineConfig({
   ],
   server: {
     host: "127.0.0.1",
-    port: 5173,
+    // WEB_PORT runs a second checkout beside this one.
+    port: Number(process.env.WEB_PORT) || 5173,
     strictPort: true,
     proxy: {
       "/api": { target: server },
